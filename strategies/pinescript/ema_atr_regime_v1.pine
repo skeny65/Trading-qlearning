@@ -1,0 +1,70 @@
+//@version=5
+strategy("EMA ATR Regime - Q-Learning Bot Signal v1",
+         overlay=true,
+         calc_on_every_tick=false,
+         process_orders_on_close=true)
+
+// ===== inputs =====
+emaFast   = input.int(20,    "EMA fast")
+emaSlow   = input.int(50,    "EMA slow")
+atrPeriod = input.int(14,    "ATR period")
+adxPeriod = input.int(14,    "ADX period")
+adxThr    = input.float(20,  "ADX threshold")
+atrMultSL = input.float(1.5, "ATR multiplier (SL)")
+rrRatio   = input.float(2.0, "Risk:Reward ratio")
+rsiLen    = input.int(14,    "RSI length")
+
+// ===== indicators =====
+ef               = ta.ema(close, emaFast)
+es               = ta.ema(close, emaSlow)
+atr              = ta.atr(atrPeriod)
+[diP, diM, adx] = ta.dmi(adxPeriod, adxPeriod)
+rsiV             = ta.rsi(close, rsiLen)
+
+// ===== regime =====
+regimeStr = adx > adxThr ? (ef > es ? "trend_up" : "trend_down") : "range"
+
+atrP70 = ta.percentile_linear_interpolation(atr, 100, 70)
+atrP30 = ta.percentile_linear_interpolation(atr, 100, 30)
+volStr = atr > atrP70 ? "high" : (atr < atrP30 ? "low" : "mid")
+
+momStr = rsiV > 55 ? "bullish" : (rsiV < 45 ? "bearish" : "neutral")
+
+// ===== signals =====
+longCond  = ta.crossover(ef, es)  and adx > adxThr
+shortCond = ta.crossunder(ef, es) and adx > adxThr
+
+// ===== plot =====
+plot(ef, color=color.aqua,   title="EMA fast")
+plot(es, color=color.orange, title="EMA slow")
+
+// ===== alerts (JSON envelope for /webhook/tv) =====
+buildAlert(string sideAct, float entry, float slPx, float tpPx) =>
+    '{"timestamp":"' + str.format_time(time, "yyyy-MM-dd'T'HH:mm:ssZ", "UTC") + '",' +
+    '"status":"pending","processed":false,"source":"tradingview",' +
+    '"signal":{' +
+    '"strategy_id":"strategy_tv_qlearning",' +
+    '"symbol":"' + syminfo.ticker + '",' +
+    '"action":"' + sideAct + '",' +
+    '"confidence":0.75,"size":0.1,' +
+    '"params":{' +
+        '"price":'      + str.tostring(entry) + ',' +
+        '"sl":'         + str.tostring(slPx)  + ',' +
+        '"tp":'         + str.tostring(tpPx)  + ',' +
+        '"atr":'        + str.tostring(atr)   + ',' +
+        '"regime":"'    + regimeStr + '",'  +
+        '"volatility":"'+ volStr    + '",'  +
+        '"momentum":"'  + momStr    + '"'   +
+    '}}}'
+
+if longCond
+    sl = close - atr * atrMultSL
+    tp = close + atr * atrMultSL * rrRatio
+    alert(buildAlert("buy", close, sl, tp), alert.freq_once_per_bar_close)
+    strategy.entry("L", strategy.long)
+
+if shortCond
+    sl = close + atr * atrMultSL
+    tp = close - atr * atrMultSL * rrRatio
+    alert(buildAlert("sell", close, sl, tp), alert.freq_once_per_bar_close)
+    strategy.entry("S", strategy.short)

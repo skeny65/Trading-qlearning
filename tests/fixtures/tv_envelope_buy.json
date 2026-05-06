@@ -1,0 +1,22 @@
+{
+  "timestamp": "2026-05-03T14:30:00Z",
+  "status": "pending",
+  "processed": false,
+  "source": "tradingview",
+  "signal": {
+    "strategy_id": "strategy_tv_qlearning",
+    "symbol": "SPY",
+    "action": "buy",
+    "confidence": 0.75,
+    "size": 0.1,
+    "params": {
+      "price": 512.30,
+      "sl": 510.20,
+      "tp": 516.50,
+      "atr": 1.45,
+      "regime": "trend_up",
+      "volatility": "mid",
+      "momentum": "bullish"
+    }
+  }
+}
