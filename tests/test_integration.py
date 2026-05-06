@@ -43,7 +43,7 @@ os.environ["DRY_RUN"] = "false"
 import config
 from core.qlearning_agent        import QLearningAgent
 from core.tv_signal_parser       import parse_tv_envelope
-from excel_logger                import append_excel_rows
+from utils.excel_logger          import append_excel_rows
 from manager.qlearning_trainer   import QLearningTrainer
 from sender                      import webhook_client, signal_formatter
 from strategies.strategy_tv_qlearning import TVQLearningStrategy

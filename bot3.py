@@ -8,7 +8,7 @@ Patron identico a bot2 (agente01.py):
   - Notifica via Telegram (sender/telegram_notifier.py)
   - Registra en state/decision_log.jsonl
   - Escribe reporte en logs/YYYY-MM-DD_HH-MM-SS.json
-  - Acumula en logs/trade_log.xlsx (excel_logger.py)
+  - Acumula en logs/trade_log.xlsx (utils/excel_logger.py)
 
 Endpoints:
     GET  /                   health check rapido
@@ -37,7 +37,7 @@ from pydantic import BaseModel
 from core.qlearning_agent      import QLearningAgent
 from core.reward_calculator    import compute_reward
 from core.tv_signal_parser     import parse_tv_envelope
-from excel_logger              import append_excel_rows
+from utils.excel_logger        import append_excel_rows
 from manager.qlearning_trainer import QLearningTrainer
 from sender                    import webhook_client, signal_formatter, telegram_notifier
 from strategies.strategy_tv_qlearning import TVQLearningStrategy
