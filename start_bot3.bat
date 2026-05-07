@@ -1,6 +1,6 @@
 @echo off
 setlocal enabledelayedexpansion
-title Bot3 Q-Learning
+title Bot3 Q-Learning (:8001)
 
 REM ============================================================
 REM  Directorio base: carpeta donde esta este .bat
@@ -23,7 +23,7 @@ REM ============================================================
 REM  Valores por defecto si .env no los tiene
 REM ============================================================
 if "%PORT%"==""              set PORT=8001
-if "%DRY_RUN%"==""           set DRY_RUN=true
+if "%DRY_RUN%"==""           set DRY_RUN=false
 if "%QLEARNING_ENABLED%"=="" set QLEARNING_ENABLED=true
 
 REM ============================================================
@@ -42,7 +42,7 @@ echo  ============================================================
 echo.
 echo   Directorio : %~dp0
 echo   Puerto     : %PORT%
-echo   Modo       : %DRY_RUN%  (DRY_RUN)
+echo   DRY_RUN    : %DRY_RUN%
 echo   Q-Learning : %QLEARNING_ENABLED%
 echo   Bot1 URL   : %BOT1_WEBHOOK_URL%
 echo.
@@ -50,9 +50,6 @@ echo   Endpoints utiles:
 echo     POST  http://localhost:%PORT%/webhook/tv
 echo     GET   http://localhost:%PORT%/health
 echo     GET   http://localhost:%PORT%/qlearning/status
-echo     POST  http://localhost:%PORT%/qlearning/pause
-echo     POST  http://localhost:%PORT%/qlearning/resume
-echo     GET   http://localhost:%PORT%/pending
 echo.
 echo  ============================================================
 echo.
@@ -60,7 +57,7 @@ echo.
 REM ============================================================
 REM  1. Verificar Python
 REM ============================================================
-echo [1/3] Verificando Python...
+echo [1/4] Verificando Python...
 python --version >nul 2>&1
 if errorlevel 1 (
     echo.
@@ -75,7 +72,7 @@ echo.
 REM ============================================================
 REM  2. Instalar / actualizar dependencias
 REM ============================================================
-echo [2/3] Instalando dependencias (requirements.txt)...
+echo [2/4] Instalando dependencias...
 python -m pip install -r requirements.txt --quiet --disable-pip-version-check
 if errorlevel 1 (
     echo.
@@ -89,11 +86,11 @@ echo        OK - dependencias al dia.
 echo.
 
 REM ============================================================
-REM  3. Verificar conexion con bot1
+REM  3. Verificar conexion con bot1 (localhost)
 REM ============================================================
-echo [3/3] Verificando bot1 en %BOT1_WEBHOOK_URL%...
+echo [3/4] Verificando bot1 en %BOT1_WEBHOOK_URL%...
 python -X utf8 -c "
-import urllib.request, sys
+import urllib.request
 try:
     url = '%BOT1_WEBHOOK_URL%'.replace('/webhook/bot3', '/health')
     r = urllib.request.urlopen(url, timeout=3)
@@ -102,6 +99,14 @@ except Exception as e:
     print('       AVISO: bot1 no responde -', e)
     print('       Bot3 arrancara igual. Las senales se guardaran en cola.')
 " 2>nul
+echo.
+
+REM ============================================================
+REM  4. Arrancar ngrok en ventana separada (puerto 8001)
+REM ============================================================
+echo [4/4] Arrancando ngrok en puerto %PORT%...
+start "ngrok Bot3" cmd /k "ngrok http --domain=shaft-goliath-shakable.ngrok-free.dev %PORT%"
+echo        OK - ngrok arrancado en ventana separada.
 echo.
 
 REM ============================================================
@@ -114,24 +119,14 @@ echo  ============================================================
 echo.
 
 :restart_loop
-set _timestamp=%date:~6,4%-%date:~3,2%-%date:~0,2%_%time:~0,2%-%time:~3,2%-%time:~6,2%
-set _timestamp=%_timestamp: =0%
-set _logfile=logs\bot3_%_timestamp%.log
-
-echo  [%time%] Iniciando uvicorn... log: %_logfile%
+echo  [%time%] Iniciando uvicorn en puerto %PORT%...
 echo.
 
-python -X utf8 -m uvicorn bot3:app ^
-    --host 0.0.0.0 ^
-    --port %PORT% ^
-    --log-level info ^
-    --no-access-log ^
-    2>&1 | tee "%_logfile%"
+python -X utf8 -m uvicorn bot3:app --host 0.0.0.0 --port %PORT% --log-level info
 
-REM Si uvicorn termina (crash o ctrl+c), evaluar
+REM Si uvicorn termina, evaluar si fue manual o crash
 set _exit=%errorlevel%
 
-REM Ctrl+C devuelve errorlevel 0 o negativo en algunos casos
 if %_exit% EQU 0 (
     echo.
     echo  [%time%] Bot3 detenido normalmente. Saliendo.

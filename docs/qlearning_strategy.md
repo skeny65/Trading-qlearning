@@ -69,15 +69,15 @@ POST /webhook/tv  (X-Webhook-Secret header)
     +--> encode_state(regime, volatility, momentum)
     +--> agent.choose_action(state)   [epsilon-greedy]
     |
-    +-- EXECUTE_FULL  -> OrderRouter.place_order(size x1.0)
-    +-- EXECUTE_HALF  -> OrderRouter.place_order(size x0.5)
+    +-- EXECUTE_FULL  -> webhook_client.send() -> bot1 -> Alpaca (size x1.0)
+    +-- EXECUTE_HALF  -> webhook_client.send() -> bot1 -> Alpaca (size x0.5)
     +-- SKIP          -> log + return skipped_by_qlearning
-    +-- INVERT        -> OrderRouter.place_order(side invertido, x0.5)
+    +-- INVERT        -> webhook_client.send() -> bot1 -> Alpaca (side invertido, x0.5)
     |
     v
 pending_q_decisions[order_id] = {state, action, timestamp}
     |
-    v  (cuando la posicion se cierra - Alpaca poll o alerta manual)
+    v  (cuando la posicion se cierra - manual o TP/SL)
 POST /qlearning/update  {order_id, pnl_pct, duration_min, ...}
     |
     +--> compute_reward(trade_result)
@@ -87,24 +87,50 @@ POST /qlearning/update  {order_id, pnl_pct, duration_min, ...}
     +--> agent.save()
 ```
 
+## Enviar actualizacion de aprendizaje (PowerShell)
+
+Cuando cierra una posicion, enviar el resultado a bot3 para que aprenda:
+
+```powershell
+$headers = @{ "Content-Type" = "application/json" }
+$body = @{
+    order_id              = "759b9684-528d-47cc-b54a-98aa68003a5a"
+    pnl_pct              = 0.5
+    duration_min         = 45.0
+    account_drawdown_pct = -1.2
+    r_multiple           = 1.5
+    next_state           = "range|mid|neutral"
+} | ConvertTo-Json
+
+Invoke-WebRequest -Uri http://localhost:8001/qlearning/update `
+    -Method POST -Headers $headers -Body $body
+```
+
 ## Monitoreo
 
-- `GET /qlearning/status` - resumen: alpha, epsilon, paused, best/worst state-action
-- `GET /qlearning/qtable` - Q-table completa (JSON)
-- `GET /pending`           - decisiones pendientes de cierre
+```powershell
+# Resumen del agente: alpha, epsilon, paused, best/worst state-action
+Invoke-WebRequest http://localhost:8001/qlearning/status | Select-Object -ExpandProperty Content
+
+# Q-table completa
+Invoke-WebRequest http://localhost:8001/qlearning/qtable | Select-Object -ExpandProperty Content
+
+# Decisiones pendientes de cierre
+Invoke-WebRequest http://localhost:8001/pending | Select-Object -ExpandProperty Content
+```
 
 ## Intervencion manual
 
-```bash
+```powershell
 # Pausar agente
-curl -X POST http://localhost:8001/qlearning/pause
+Invoke-WebRequest -Uri http://localhost:8001/qlearning/pause -Method POST
 
 # Reanudar agente
-curl -X POST http://localhost:8001/qlearning/resume
+Invoke-WebRequest -Uri http://localhost:8001/qlearning/resume -Method POST
 
-# Restaurar Q-Table desde backup (PowerShell)
-.\scripts\restore_qtable.ps1 -BackupFile "data\qlearning\backups\q_table_20260503_120000.json"
+# Restaurar Q-Table desde backup
+Copy-Item "data\qlearning\backups\q_table_20260506_060000.json" "data\qlearning\q_table.json"
 
 # Resetear Q-Table (tabla vacia)
-echo {} > data\qlearning\q_table.json
+'{}' | Out-File data\qlearning\q_table.json -Encoding utf8
 ```

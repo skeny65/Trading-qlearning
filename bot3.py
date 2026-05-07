@@ -176,12 +176,14 @@ def _check_ip(request: Request):
         raise HTTPException(status_code=403, detail=f"IP no permitida: {client_ip}")
 
 
-def _check_secret(secret: Optional[str]):
+def _check_secret(secret: Optional[str], query_secret: Optional[str] = None):
     if not config.TV_WEBHOOK_SECRET:
         logger.warning("TV_WEBHOOK_SECRET no configurado - aceptando todo (INSEGURO)")
         return
-    if secret != config.TV_WEBHOOK_SECRET:
-        raise HTTPException(status_code=401, detail="Webhook secret invalido")
+    # Acepta el secreto tanto en header X-Webhook-Secret como en ?secret= (URL query param)
+    if secret == config.TV_WEBHOOK_SECRET or query_secret == config.TV_WEBHOOK_SECRET:
+        return
+    raise HTTPException(status_code=401, detail="Webhook secret invalido")
 
 
 # -- routes --------------------------------------------------------------------
@@ -216,12 +218,15 @@ async def webhook_tv(
     """
     Recibe alertas TradingView, aplica Q-Learning y envia a bot1.
     Patron identico a bot2: log + Excel + Telegram por cada evento.
+    Acepta secreto via header X-Webhook-Secret o query param ?secret=
     """
     _check_ip(request)
-    _check_secret(x_webhook_secret)
+    query_secret = request.query_params.get("secret")
+    _check_secret(x_webhook_secret, query_secret)
 
     try:
-        body = await request.json()
+        raw = await request.body()
+        body = json.loads(raw.decode("utf-8"))
     except Exception:
         raise HTTPException(status_code=400, detail="JSON invalido")
 
