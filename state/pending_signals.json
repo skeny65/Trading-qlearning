@@ -1,1 +1,50 @@
-[]
+[
+  {
+    "timestamp": "2026-05-07T12:03:02.575852+00:00",
+    "status": "pending",
+    "signal": {
+      "strategy_id": "bot3_qlearning",
+      "symbol": "SOLUSDT",
+      "action": "buy",
+      "confidence": 0.7,
+      "size": 0.1,
+      "params": {
+        "source": "bot3_qlearning_agent",
+        "ql_action": "EXECUTE_FULL",
+        "ql_state": "range|high|bullish",
+        "q_value": 0.0,
+        "regime": "range",
+        "volatility": "high",
+        "momentum": "bullish",
+        "price": 89.7,
+        "sl": 89.584143778,
+        "tp": 89.9317124441,
+        "atr": 0.0772374814
+      }
+    }
+  },
+  {
+    "timestamp": "2026-05-08T13:40:05.655984+00:00",
+    "status": "pending",
+    "signal": {
+      "strategy_id": "bot3_qlearning",
+      "symbol": "SOLUSDT",
+      "action": "sell",
+      "confidence": 0.7,
+      "size": 0.1,
+      "params": {
+        "source": "bot3_qlearning_agent",
+        "ql_action": "EXECUTE_FULL",
+        "ql_state": "range|high|bearish",
+        "q_value": 0.0,
+        "regime": "range",
+        "volatility": "high",
+        "momentum": "bearish",
+        "price": 88.14,
+        "sl": 88.2788674682,
+        "tp": 87.8622650635,
+        "atr": 0.0925783122
+      }
+    }
+  }
+]

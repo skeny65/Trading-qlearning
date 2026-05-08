@@ -88,17 +88,8 @@ echo.
 REM ============================================================
 REM  3. Verificar conexion con bot1 (localhost)
 REM ============================================================
-echo [3/4] Verificando bot1 en %BOT1_WEBHOOK_URL%...
-python -X utf8 -c "
-import urllib.request
-try:
-    url = '%BOT1_WEBHOOK_URL%'.replace('/webhook/bot3', '/health')
-    r = urllib.request.urlopen(url, timeout=3)
-    print('       OK - bot1 respondio:', r.status)
-except Exception as e:
-    print('       AVISO: bot1 no responde -', e)
-    print('       Bot3 arrancara igual. Las senales se guardaran en cola.')
-" 2>nul
+echo [3/4] Verificando bot1 en localhost:8000...
+powershell -Command "try { $r = Invoke-WebRequest http://localhost:8000/health -TimeoutSec 3 -UseBasicParsing; Write-Host '       OK - bot1 respondio:' $r.StatusCode } catch { Write-Host '       AVISO: bot1 no responde - bot3 arrancara igual' }"
 echo.
 
 REM ============================================================

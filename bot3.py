@@ -70,6 +70,64 @@ def _log_decision(entry: dict) -> None:
         logger.warning(f"No se pudo escribir decision_log: {e}")
 
 
+def _send_to_bot1_and_track(
+    payload, event_id, ticker, side, final_size,
+    ql_action, state, q_value, original_action, decision, signal,
+):
+    """Envia a bot1 y registra resultado. Corre en background para no bloquear TV."""
+    wh_response    = webhook_client.send(payload)
+    webhook_status = wh_response.get("status", "unknown")
+    order_id       = wh_response.get("order_id", event_id)
+
+    if webhook_status == "dry_run":
+        order_id = f"dry_{ticker}_{event_id}"
+        logger.info(f"[{ticker}] DRY_RUN - senal simulada: {ql_action} {side} size={final_size}")
+        telegram_notifier.signal_sent(ticker, side, final_size, ql_action, state, True)
+    elif webhook_status == "executed":
+        logger.info(f"[{ticker}] bot1 ejecuto: {side} size={final_size} order={order_id}")
+        telegram_notifier.signal_sent(ticker, side, final_size, ql_action, state, False)
+    elif webhook_status == "rejected":
+        reason = wh_response.get("reason", "sin razon")
+        logger.warning(f"[{ticker}] bot1 rechazo: {reason}")
+        telegram_notifier.signal_rejected(ticker, reason)
+    elif webhook_status == "failed":
+        error = wh_response.get("error", "error de red")
+        logger.error(f"[{ticker}] Fallo de red - senal en cola: {error}")
+        telegram_notifier.webhook_failed(ticker, error)
+
+    if agent and webhook_status in ("dry_run", "executed"):
+        pending_q_decisions[order_id] = {
+            "state":         state,
+            "action":        ql_action,
+            "timestamp":     datetime.now(timezone.utc).isoformat(),
+            "ticker":        ticker,
+            "original_side": original_action,
+            "executed_side": side,
+        }
+
+    log_entry = {
+        "event_id":       event_id,
+        "decision":       "EXECUTE" if webhook_status in ("dry_run", "executed") else "FAILED",
+        "ql_action":      ql_action,
+        "symbol":         ticker,
+        "action":         side,
+        "state":          state,
+        "q_value":        q_value,
+        "size":           final_size,
+        "webhook_status": webhook_status,
+        "order_id":       order_id,
+        "reason":         decision["reason"],
+        "dry_run":        config.DRY_RUN,
+    }
+    _log_decision(log_entry)
+    append_excel_rows([_build_excel_row(
+        event_id, ticker, original_action, decision, True, webhook_status, order_id, signal
+    )])
+    _write_event_report(log_entry)
+    if trainer:
+        trainer.save_and_backup()
+
+
 def _write_event_report(report: dict) -> None:
     """Escribe un reporte JSON en logs/YYYY-MM-DD_HH-MM-SS.json."""
     Path("logs").mkdir(parents=True, exist_ok=True)
@@ -226,7 +284,7 @@ async def webhook_tv(
 
     try:
         raw = await request.body()
-        body = json.loads(raw.decode("utf-8"))
+        body = json.loads(raw.strip())
     except Exception:
         raise HTTPException(status_code=400, detail="JSON invalido")
 
@@ -329,67 +387,15 @@ async def webhook_tv(
         atr        = params.atr,
     )
 
-    # -- Enviar a bot1 (patron bot2: send + manejo de respuesta) --------------
-    wh_response     = webhook_client.send(payload)
-    webhook_status  = wh_response.get("status", "unknown")
-    order_id        = wh_response.get("order_id", event_id)
-
-    if webhook_status == "dry_run":
-        order_id = f"dry_{ticker}_{event_id}"
-        logger.info(f"[{ticker}] DRY_RUN - senal simulada: {ql_action} {side} size={final_size}")
-        telegram_notifier.signal_sent(ticker, side, final_size, ql_action, state, True)
-
-    elif webhook_status == "executed":
-        logger.info(f"[{ticker}] bot1 ejecuto: {side} size={final_size} order={order_id}")
-        telegram_notifier.signal_sent(ticker, side, final_size, ql_action, state, False)
-
-    elif webhook_status == "rejected":
-        reason = wh_response.get("reason", "sin razon")
-        logger.warning(f"[{ticker}] bot1 rechazo: {reason}")
-        telegram_notifier.signal_rejected(ticker, reason)
-
-    elif webhook_status == "failed":
-        error = wh_response.get("error", "error de red")
-        logger.error(f"[{ticker}] Fallo de red - senal en cola: {error}")
-        telegram_notifier.webhook_failed(ticker, error)
-
-    # -- Tracking para hindsight learning --------------------------------------
-    if agent and webhook_status in ("dry_run", "executed"):
-        pending_q_decisions[order_id] = {
-            "state":         state,
-            "action":        ql_action,
-            "timestamp":     datetime.now(timezone.utc).isoformat(),
-            "ticker":        ticker,
-            "original_side": original_action,
-            "executed_side": side,
-        }
-
-    # -- Persistencia (patron bot2: decision_log + Excel + reporte) -----------
-    log_entry = {
-        "event_id":      event_id,
-        "decision":      "EXECUTE" if webhook_status in ("dry_run", "executed") else "FAILED",
-        "ql_action":     ql_action,
-        "symbol":        ticker,
-        "action":        side,
-        "state":         state,
-        "q_value":       q_value,
-        "size":          final_size,
-        "webhook_status": webhook_status,
-        "order_id":      order_id,
-        "reason":        decision["reason"],
-        "dry_run":       config.DRY_RUN,
-    }
-    _log_decision(log_entry)
-
-    excel_row = _build_excel_row(
-        event_id, ticker, original_action, decision, True, webhook_status, order_id, signal
+    # -- Enviar a bot1 en BACKGROUND para no bloquear la respuesta a TradingView
+    # TradingView tiene timeout de ~5s; el retry a bot1 puede tardar 45s+
+    background_tasks.add_task(
+        _send_to_bot1_and_track,
+        payload, event_id, ticker, side, final_size,
+        ql_action, state, q_value, original_action, decision, signal,
     )
-    background_tasks.add_task(append_excel_rows, [excel_row])
-    background_tasks.add_task(_write_event_report, log_entry)
 
-    if trainer:
-        background_tasks.add_task(trainer.save_and_backup)
-
+    # Responder a TradingView inmediatamente
     return {
         "ticker":          ticker,
         "original_action": original_action,
@@ -399,8 +405,8 @@ async def webhook_tv(
         "execute":         True,
         "side":            side,
         "size":            final_size,
-        "status":          webhook_status,
-        "order_id":        order_id,
+        "status":          "queued",
+        "event_id":        event_id,
         "dry_run":         config.DRY_RUN,
         "reason":          decision["reason"],
         "timestamp":       datetime.now(timezone.utc).isoformat(),

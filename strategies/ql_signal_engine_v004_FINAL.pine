@@ -1,0 +1,219 @@
+//@version=5
+indicator("QL Signal Engine v004 (Q-Learning Multi-Setup)", overlay=true, max_labels_count=500)
+
+// =============================================================================
+// QL SIGNAL ENGINE v004 - SENALES PARA AGENTE Q-LEARNING
+// =============================================================================
+// Diseñado para alimentar a un agente Q-Learning. NO es una estrategia
+// ganadora por si sola: genera senales ABUNDANTES y CONTEXTUALIZADAS para
+// que el agente aprenda a filtrarlas segun el regimen de mercado.
+//
+// Filosofia:
+//   1. Tres setups en paralelo (trend, mean-reversion, breakout)
+//   2. Estado rico: regime + volatility + momentum + trend_strength + htf_bias
+//   3. El bot decide via Q-Table; aprende que setup funciona en cada regimen
+//
+// FRECUENCIA ESPERADA: 20-40 senales/dia (mas que apuesta porque hay 3 setups)
+// =============================================================================
+
+// ----------------- INPUTS -----------------
+grpTrend = "1) Trend Setup (EMA cross + ADX)"
+emaFastLen = input.int(20, "EMA Fast",       minval=2, group=grpTrend)
+emaSlowLen = input.int(50, "EMA Slow",       minval=5, group=grpTrend)
+adxLen     = input.int(14, "ADX Length",     minval=2, group=grpTrend)
+adxMin     = input.float(20.0, "ADX min para trend", step=0.5, group=grpTrend)
+
+grpMR = "2) Mean Reversion Setup (RSI + Bollinger)"
+rsiLen      = input.int(14, "RSI Length",      minval=2, group=grpMR)
+rsiOver     = input.int(70, "RSI Overbought",  minval=51, maxval=99, group=grpMR)
+rsiUnder    = input.int(30, "RSI Oversold",    minval=1,  maxval=49, group=grpMR)
+bbLen       = input.int(20, "BB Length",       minval=2, group=grpMR)
+bbMult      = input.float(2.0, "BB StdDev",    step=0.1, group=grpMR)
+
+grpBO = "3) Breakout Setup (Donchian + Volumen)"
+donLen      = input.int(20, "Donchian Length", minval=5, group=grpBO)
+volMaLen    = input.int(20, "Volume MA Length", minval=2, group=grpBO)
+volMult     = input.float(1.5, "Volume > MA x", step=0.1, group=grpBO)
+
+grpRisk = "Riesgo (R:R)"
+atrLen      = input.int(14, "ATR Length", minval=2, group=grpRisk)
+atrSL       = input.float(1.5, "ATR multiplier (SL)", step=0.1, group=grpRisk)
+rr          = input.float(2.0, "Reward / Risk", step=0.1, group=grpRisk)
+
+grpHTF = "Higher TF (bias)"
+htf         = input.timeframe("240", "Higher TF", group=grpHTF)
+htfEmaLen   = input.int(50, "HTF EMA length", minval=2, group=grpHTF)
+
+grpControl = "Control de Ejecucion"
+cooldownBars = input.int(3, "Cooldown bars", minval=1, group=grpControl, tooltip="Evita senales duplicadas en barras consecutivas")
+
+grpAlert = "Alertas / Webhook"
+strategyId  = input.string("strategy_tv_qlearning", "strategy_id", group=grpAlert)
+defaultSize = input.float(0.10, "Default size (fraccion equity)", step=0.01, minval=0.001, maxval=1.0, group=grpAlert)
+
+// ----------------- CALCULOS -----------------
+emaFast = ta.ema(close, emaFastLen)
+emaSlow = ta.ema(close, emaSlowLen)
+atrV    = ta.atr(atrLen)
+rsiV    = ta.rsi(close, rsiLen)
+[diP, diM, adxV] = ta.dmi(adxLen, adxLen)
+
+bbBasis = ta.sma(close, bbLen)
+bbDev   = bbMult * ta.stdev(close, bbLen)
+bbUpper = bbBasis + bbDev
+bbLower = bbBasis - bbDev
+
+donHigh = ta.highest(high, donLen)
+donLow  = ta.lowest(low,  donLen)
+
+volSma  = ta.sma(volume, volMaLen)
+volOk   = volume > volSma * volMult
+
+htfEma  = request.security(syminfo.tickerid, htf, ta.ema(close, htfEmaLen), barmerge.gaps_off, barmerge.lookahead_off)
+htfBull = close > htfEma
+htfBear = close < htfEma
+
+// STATE FEATURES para el bot Q-Learning
+regimeStr = adxV > adxMin ? (emaFast > emaSlow ? "trend_up" : "trend_down") : "range"
+
+atrP70 = ta.percentile_linear_interpolation(atrV, 100, 70)
+atrP30 = ta.percentile_linear_interpolation(atrV, 100, 30)
+volStr = atrV > atrP70 ? "high" : atrV < atrP30 ? "low" : "mid"
+
+momStr = rsiV > 55 ? "bullish" : rsiV < 45 ? "bearish" : "neutral"
+
+adxBucket = adxV < 15 ? "weak" : adxV < 25 ? "moderate" : adxV < 40 ? "strong" : "extreme"
+
+htfBiasStr = htfBull ? "bull" : htfBear ? "bear" : "neutral"
+
+// Timestamp y strings para JSON
+ts = str.format_time(time, "yyyy-MM-dd'T'HH:mm:ssZ", "UTC")
+ticker = syminfo.ticker
+
+// SL/TP
+slLong  = close - atrV * atrSL
+tpLong  = close + atrV * atrSL * rr
+slShort = close + atrV * atrSL
+tpShort = close - atrV * atrSL * rr
+
+// SENALES (3 SETUPS)
+trendLongRaw  = ta.crossover(emaFast, emaSlow)  and adxV > adxMin
+trendShortRaw = ta.crossunder(emaFast, emaSlow) and adxV > adxMin
+
+mrLongRaw  = ta.crossover(rsiV, rsiUnder)  and close < bbLower
+mrShortRaw = ta.crossunder(rsiV, rsiOver)  and close > bbUpper
+
+boLongRaw  = ta.crossover(close, donHigh[1])  and volOk
+boShortRaw = ta.crossunder(close, donLow[1])  and volOk
+
+// Cooldown global
+var int    lastSignalBar  = na
+enoughCooldown = na(lastSignalBar) or (bar_index - lastSignalBar >= cooldownBars)
+
+trendLong  = trendLongRaw  and enoughCooldown
+trendShort = trendShortRaw and enoughCooldown
+mrLong     = mrLongRaw     and enoughCooldown
+mrShort    = mrShortRaw    and enoughCooldown
+boLong     = boLongRaw     and enoughCooldown
+boShort    = boShortRaw    and enoughCooldown
+
+anySignal = trendLong or trendShort or mrLong or mrShort or boLong or boShort
+if anySignal
+    lastSignalBar := bar_index
+
+// VISUALES
+plot(emaFast, color=color.new(color.aqua,   0), linewidth=2, title="EMA Fast")
+plot(emaSlow, color=color.new(color.orange, 0), linewidth=2, title="EMA Slow")
+plot(bbUpper, color=color.new(color.gray,  60), title="BB Upper")
+plot(bbLower, color=color.new(color.gray,  60), title="BB Lower")
+
+bgcolor(regimeStr == "range" ? color.new(color.gray, 95) : na, title="Range bg")
+
+plotshape(trendLong,  title="Trend BUY",  location=location.belowbar, style=shape.triangleup,   color=color.new(color.green,   0), size=size.small, text="T-BUY")
+plotshape(trendShort, title="Trend SELL", location=location.abovebar, style=shape.triangledown, color=color.new(color.red,     0), size=size.small, text="T-SELL")
+plotshape(mrLong,     title="MR BUY",     location=location.belowbar, style=shape.circle,       color=color.new(color.lime,    0), size=size.tiny,  text="MR-B")
+plotshape(mrShort,    title="MR SELL",    location=location.abovebar, style=shape.circle,       color=color.new(color.maroon,  0), size=size.tiny,  text="MR-S")
+plotshape(boLong,     title="BO BUY",     location=location.belowbar, style=shape.diamond,      color=color.new(color.yellow,  0), size=size.tiny,  text="BO-B")
+plotshape(boShort,    title="BO SELL",    location=location.abovebar, style=shape.diamond,      color=color.new(color.fuchsia, 0), size=size.tiny,  text="BO-S")
+
+// LABELS
+if trendLong
+    label.new(bar_index, low, "TREND BUY\nE:" + str.tostring(close, "#.####") + "\nSL:" + str.tostring(slLong, "#.####") + "\nTP:" + str.tostring(tpLong, "#.####") + "\nADX:" + str.tostring(adxV, "#.0"), style=label.style_label_up, color=color.new(color.green, 0), textcolor=color.white, size=size.tiny)
+if trendShort
+    label.new(bar_index, high, "TREND SELL\nE:" + str.tostring(close, "#.####") + "\nSL:" + str.tostring(slShort, "#.####") + "\nTP:" + str.tostring(tpShort, "#.####") + "\nADX:" + str.tostring(adxV, "#.0"), style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white, size=size.tiny)
+if mrLong
+    label.new(bar_index, low, "MR BUY\nE:" + str.tostring(close, "#.####") + "\nSL:" + str.tostring(slLong, "#.####") + "\nTP:" + str.tostring(tpLong, "#.####") + "\nRSI:" + str.tostring(rsiV, "#.0"), style=label.style_label_up, color=color.new(color.lime, 0), textcolor=color.black, size=size.tiny)
+if mrShort
+    label.new(bar_index, high, "MR SELL\nE:" + str.tostring(close, "#.####") + "\nSL:" + str.tostring(slShort, "#.####") + "\nTP:" + str.tostring(tpShort, "#.####") + "\nRSI:" + str.tostring(rsiV, "#.0"), style=label.style_label_down, color=color.new(color.maroon, 0), textcolor=color.white, size=size.tiny)
+if boLong
+    label.new(bar_index, low, "BO BUY\nE:" + str.tostring(close, "#.####") + "\nSL:" + str.tostring(slLong, "#.####") + "\nTP:" + str.tostring(tpLong, "#.####") + "\nVol:" + str.tostring(volume / volSma, "#.#"), style=label.style_label_up, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
+if boShort
+    label.new(bar_index, high, "BO SELL\nE:" + str.tostring(close, "#.####") + "\nSL:" + str.tostring(slShort, "#.####") + "\nTP:" + str.tostring(tpShort, "#.####") + "\nVol:" + str.tostring(volume / volSma, "#.#"), style=label.style_label_down, color=color.new(color.fuchsia, 0), textcolor=color.white, size=size.tiny)
+
+// DEBUG TABLE
+var table dbg = table.new(position.top_right, 2, 14, border_width=1)
+if barstate.islast
+    table.cell(dbg, 0, 0,  "Estado",       text_color=color.white, bgcolor=color.new(color.gray, 0))
+    table.cell(dbg, 1, 0,  "Valor",        text_color=color.white, bgcolor=color.new(color.gray, 0))
+    table.cell(dbg, 0, 1,  "Activo",       text_color=color.white)
+    table.cell(dbg, 1, 1,  ticker,         text_color=color.aqua)
+    table.cell(dbg, 0, 2,  "regime",       text_color=color.white)
+    table.cell(dbg, 1, 2,  regimeStr,      text_color=regimeStr == "range" ? color.gray : color.lime)
+    table.cell(dbg, 0, 3,  "volatility",   text_color=color.white)
+    table.cell(dbg, 1, 3,  volStr,         text_color=volStr == "high" ? color.orange : color.aqua)
+    table.cell(dbg, 0, 4,  "momentum",     text_color=color.white)
+    table.cell(dbg, 1, 4,  momStr,         text_color=momStr == "bullish" ? color.green : momStr == "bearish" ? color.red : color.gray)
+    table.cell(dbg, 0, 5,  "trend_strength",text_color=color.white)
+    table.cell(dbg, 1, 5,  adxBucket,      text_color=adxBucket == "extreme" ? color.fuchsia : adxBucket == "strong" ? color.lime : color.aqua)
+    table.cell(dbg, 0, 6,  "htf_bias",     text_color=color.white)
+    table.cell(dbg, 1, 6,  htfBiasStr,     text_color=htfBiasStr == "bull" ? color.green : htfBiasStr == "bear" ? color.red : color.gray)
+    table.cell(dbg, 0, 7,  "RSI",          text_color=color.white)
+    table.cell(dbg, 1, 7,  str.tostring(rsiV, "#.0"),  text_color=color.white)
+    table.cell(dbg, 0, 8,  "ADX",          text_color=color.white)
+    table.cell(dbg, 1, 8,  str.tostring(adxV, "#.0") + (adxV >= adxMin ? " OK" : " --"), text_color=adxV >= adxMin ? color.green : color.gray)
+    table.cell(dbg, 0, 9,  "ATR",          text_color=color.white)
+    table.cell(dbg, 1, 9,  str.tostring(atrV, "#.####"), text_color=color.aqua)
+    table.cell(dbg, 0, 10, "Vol x MA",     text_color=color.white)
+    table.cell(dbg, 1, 10, str.tostring(volume / volSma, "#.##") + (volOk ? " OK" : ""), text_color=volOk ? color.green : color.white)
+    table.cell(dbg, 0, 11, "ultima senal", text_color=color.white)
+    table.cell(dbg, 1, 11, na(lastSignalBar) ? "ninguna" : "hace " + str.tostring(bar_index - lastSignalBar), text_color=color.white)
+    table.cell(dbg, 0, 12, "R:R",          text_color=color.white)
+    table.cell(dbg, 1, 12, "1:" + str.tostring(rr, "#.#"), text_color=color.aqua)
+    table.cell(dbg, 0, 13, "version",      text_color=color.white)
+    table.cell(dbg, 1, 13, "QL v004",      text_color=color.lime)
+
+// =============================================================================
+// ALERTAS - JSON CON CONCATENACION SEGURA (UNA LINEA CADA ALERTA)
+// =============================================================================
+
+if trendLong
+    msg = "{" + '"timestamp":"' + ts + '","status":"pending","processed":false,"source":"tradingview","signal":{"strategy_id":"' + strategyId + '","symbol":"' + ticker + '","action":"buy","confidence":0.7,"size":' + str.tostring(defaultSize) + ',"params":{"setup_type":"trend","price":' + str.tostring(close) + ',"sl":' + str.tostring(slLong) + ',"tp":' + str.tostring(tpLong) + ',"atr":' + str.tostring(atrV) + ',"adx":' + str.tostring(adxV) + ',"rsi":' + str.tostring(rsiV) + ',"regime":"' + regimeStr + '","volatility":"' + volStr + '","momentum":"' + momStr + '","trend_strength":"' + adxBucket + '","htf_bias":"' + htfBiasStr + '"}}}'
+    alert(msg, alert.freq_once_per_bar_close)
+
+if trendShort
+    msg = "{" + '"timestamp":"' + ts + '","status":"pending","processed":false,"source":"tradingview","signal":{"strategy_id":"' + strategyId + '","symbol":"' + ticker + '","action":"sell","confidence":0.7,"size":' + str.tostring(defaultSize) + ',"params":{"setup_type":"trend","price":' + str.tostring(close) + ',"sl":' + str.tostring(slShort) + ',"tp":' + str.tostring(tpShort) + ',"atr":' + str.tostring(atrV) + ',"adx":' + str.tostring(adxV) + ',"rsi":' + str.tostring(rsiV) + ',"regime":"' + regimeStr + '","volatility":"' + volStr + '","momentum":"' + momStr + '","trend_strength":"' + adxBucket + '","htf_bias":"' + htfBiasStr + '"}}}'
+    alert(msg, alert.freq_once_per_bar_close)
+
+if mrLong
+    msg = "{" + '"timestamp":"' + ts + '","status":"pending","processed":false,"source":"tradingview","signal":{"strategy_id":"' + strategyId + '","symbol":"' + ticker + '","action":"buy","confidence":0.7,"size":' + str.tostring(defaultSize) + ',"params":{"setup_type":"mean_rev","price":' + str.tostring(close) + ',"sl":' + str.tostring(slLong) + ',"tp":' + str.tostring(tpLong) + ',"atr":' + str.tostring(atrV) + ',"adx":' + str.tostring(adxV) + ',"rsi":' + str.tostring(rsiV) + ',"regime":"' + regimeStr + '","volatility":"' + volStr + '","momentum":"' + momStr + '","trend_strength":"' + adxBucket + '","htf_bias":"' + htfBiasStr + '"}}}'
+    alert(msg, alert.freq_once_per_bar_close)
+
+if mrShort
+    msg = "{" + '"timestamp":"' + ts + '","status":"pending","processed":false,"source":"tradingview","signal":{"strategy_id":"' + strategyId + '","symbol":"' + ticker + '","action":"sell","confidence":0.7,"size":' + str.tostring(defaultSize) + ',"params":{"setup_type":"mean_rev","price":' + str.tostring(close) + ',"sl":' + str.tostring(slShort) + ',"tp":' + str.tostring(tpShort) + ',"atr":' + str.tostring(atrV) + ',"adx":' + str.tostring(adxV) + ',"rsi":' + str.tostring(rsiV) + ',"regime":"' + regimeStr + '","volatility":"' + volStr + '","momentum":"' + momStr + '","trend_strength":"' + adxBucket + '","htf_bias":"' + htfBiasStr + '"}}}'
+    alert(msg, alert.freq_once_per_bar_close)
+
+if boLong
+    msg = "{" + '"timestamp":"' + ts + '","status":"pending","processed":false,"source":"tradingview","signal":{"strategy_id":"' + strategyId + '","symbol":"' + ticker + '","action":"buy","confidence":0.7,"size":' + str.tostring(defaultSize) + ',"params":{"setup_type":"breakout","price":' + str.tostring(close) + ',"sl":' + str.tostring(slLong) + ',"tp":' + str.tostring(tpLong) + ',"atr":' + str.tostring(atrV) + ',"adx":' + str.tostring(adxV) + ',"rsi":' + str.tostring(rsiV) + ',"regime":"' + regimeStr + '","volatility":"' + volStr + '","momentum":"' + momStr + '","trend_strength":"' + adxBucket + '","htf_bias":"' + htfBiasStr + '"}}}'
+    alert(msg, alert.freq_once_per_bar_close)
+
+if boShort
+    msg = "{" + '"timestamp":"' + ts + '","status":"pending","processed":false,"source":"tradingview","signal":{"strategy_id":"' + strategyId + '","symbol":"' + ticker + '","action":"sell","confidence":0.7,"size":' + str.tostring(defaultSize) + ',"params":{"setup_type":"breakout","price":' + str.tostring(close) + ',"sl":' + str.tostring(slShort) + ',"tp":' + str.tostring(tpShort) + ',"atr":' + str.tostring(atrV) + ',"adx":' + str.tostring(adxV) + ',"rsi":' + str.tostring(rsiV) + ',"regime":"' + regimeStr + '","volatility":"' + volStr + '","momentum":"' + momStr + '","trend_strength":"' + adxBucket + '","htf_bias":"' + htfBiasStr + '"}}}'
+    alert(msg, alert.freq_once_per_bar_close)
+
+// alertcondition para compatibilidad
+alertcondition(trendLong,  title="QL Trend BUY",     message="trend buy")
+alertcondition(trendShort, title="QL Trend SELL",    message="trend sell")
+alertcondition(mrLong,     title="QL MeanRev BUY",   message="mean_rev buy")
+alertcondition(mrShort,    title="QL MeanRev SELL",  message="mean_rev sell")
+alertcondition(boLong,     title="QL Breakout BUY",  message="breakout buy")
+alertcondition(boShort,    title="QL Breakout SELL", message="breakout sell")
