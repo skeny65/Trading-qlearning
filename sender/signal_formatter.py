@@ -20,13 +20,15 @@ def build_payload(
     ql_action:       str,
     ql_state:        str,
     q_value:         float,
-    regime:          str,
-    volatility:      str,
-    momentum:        str,
+    regime:          str   = "",
+    volatility:      str   = "",
+    momentum:        str   = "",
     price:           float = 0.0,
     sl:              float = 0.0,
     tp:              float = 0.0,
     atr:             float = 0.0,
+    strategy_id:     str   = "",
+    extra_params:    dict  = None,
 ) -> dict:
     """
     Construye el payload para bot1.
@@ -45,28 +47,35 @@ def build_payload(
       }
     }
     """
+    params = {
+        "source":     SOURCE,
+        "ql_action":  ql_action,
+        "ql_state":   ql_state,
+        "q_value":    round(q_value, 6),
+        "price":      price,
+        "sl":         sl,
+        "tp":         tp,
+        "atr":        atr,
+    }
+    if regime:
+        params["regime"]     = regime
+    if volatility:
+        params["volatility"] = volatility
+    if momentum:
+        params["momentum"]   = momentum
+    if extra_params:
+        params.update(extra_params)
+
     return {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "status":    "pending",
         "signal": {
-            "strategy_id": STRATEGY_ID,
+            "strategy_id": strategy_id or STRATEGY_ID,
             "symbol":      symbol,
             "action":      action,
             "confidence":  round(confidence, 4),
             "size":        round(size, 4),
-            "params": {
-                "source":     SOURCE,
-                "ql_action":  ql_action,
-                "ql_state":   ql_state,
-                "q_value":    round(q_value, 6),
-                "regime":     regime,
-                "volatility": volatility,
-                "momentum":   momentum,
-                "price":      price,
-                "sl":         sl,
-                "tp":         tp,
-                "atr":        atr,
-            },
+            "params":      params,
         },
     }
 

@@ -82,5 +82,17 @@
     "EXECUTE_HALF": 0.0,
     "SKIP": 0.0,
     "INVERT": 0.0
+  },
+  "trend_down|high|bullish": {
+    "EXECUTE_FULL": 0.0,
+    "EXECUTE_HALF": 0.0,
+    "SKIP": 0.0,
+    "INVERT": 0.0
+  },
+  "trend_up|low|bearish": {
+    "EXECUTE_FULL": 0.0,
+    "EXECUTE_HALF": 0.0,
+    "SKIP": 0.0,
+    "INVERT": 0.0
   }
 }

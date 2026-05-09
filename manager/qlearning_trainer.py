@@ -18,17 +18,17 @@ from core.qlearning_agent import QLearningAgent
 
 logger = logging.getLogger("bot3.trainer")
 
-REPLAY_BUFFER = "data/qlearning/replay_buffer.jsonl"
-BACKUP_DIR    = "data/qlearning/backups"
-MAX_BACKUPS   = 28
+MAX_BACKUPS = 28
 
 
 class QLearningTrainer:
     """Handles offline replay and Q-Table backups."""
 
-    def __init__(self, agent: QLearningAgent):
-        self.agent = agent
-        os.makedirs(BACKUP_DIR, exist_ok=True)
+    def __init__(self, agent: QLearningAgent, data_dir: str = "data/qlearning"):
+        self.agent         = agent
+        self._replay_path  = os.path.join(data_dir, "replay_buffer.jsonl")
+        self._backup_dir   = os.path.join(data_dir, "backups")
+        os.makedirs(self._backup_dir, exist_ok=True)
 
     # -------------------------------------------------------------------------
     # Replay buffer
@@ -51,8 +51,8 @@ class QLearningTrainer:
             "s_next": next_state,
             "done":   done,
         }
-        os.makedirs("data/qlearning", exist_ok=True)
-        with open(REPLAY_BUFFER, "a", encoding="utf-8") as f:
+        os.makedirs(os.path.dirname(self._replay_path), exist_ok=True)
+        with open(self._replay_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\n")
 
     def train_from_replay(
@@ -64,12 +64,12 @@ class QLearningTrainer:
         Re-train agent from the full replay buffer (offline passes).
         Called by DailyRunner at end of day.
         """
-        if not os.path.exists(REPLAY_BUFFER):
+        if not os.path.exists(self._replay_path):
             logger.info("No replay buffer found - skipping offline training")
             return
 
         experiences = []
-        with open(REPLAY_BUFFER, "r", encoding="utf-8") as f:
+        with open(self._replay_path, "r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if line:
@@ -104,11 +104,11 @@ class QLearningTrainer:
 
     def backup_qtable(self):
         """Create a timestamped backup of q_table.json."""
-        src = "data/qlearning/q_table.json"
+        src = self.agent._qtable_path
         if not os.path.exists(src):
             return
         ts  = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        dst = os.path.join(BACKUP_DIR, f"q_table_{ts}.json")
+        dst = os.path.join(self._backup_dir, f"q_table_{ts}.json")
         shutil.copy2(src, dst)
         logger.info(f"Q-table backup created: {dst}")
         self._cleanup_backups()
@@ -116,10 +116,10 @@ class QLearningTrainer:
     def _cleanup_backups(self):
         """Keep only the latest MAX_BACKUPS files."""
         files = sorted(
-            f for f in os.listdir(BACKUP_DIR) if f.startswith("q_table_")
+            f for f in os.listdir(self._backup_dir) if f.startswith("q_table_")
         )
         while len(files) > MAX_BACKUPS:
-            os.remove(os.path.join(BACKUP_DIR, files.pop(0)))
+            os.remove(os.path.join(self._backup_dir, files.pop(0)))
 
     def save_and_backup(self):
         """Convenience: persist agent then create backup."""

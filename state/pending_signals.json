@@ -46,5 +46,53 @@
         "atr": 0.0925783122
       }
     }
+  },
+  {
+    "timestamp": "2026-05-09T02:46:59.982681+00:00",
+    "status": "pending",
+    "signal": {
+      "strategy_id": "bot3_qlearning",
+      "symbol": "SOLUSDT",
+      "action": "sell",
+      "confidence": 0.7,
+      "size": 0.1,
+      "params": {
+        "source": "bot3_qlearning_agent",
+        "ql_action": "EXECUTE_FULL",
+        "ql_state": "range|mid|bearish",
+        "q_value": 0.0,
+        "price": 93.34,
+        "sl": 93.469787964,
+        "tp": 93.0804240719,
+        "atr": 0.0865253094,
+        "regime": "range",
+        "volatility": "mid",
+        "momentum": "bearish"
+      }
+    }
+  },
+  {
+    "timestamp": "2026-05-09T03:41:59.981814+00:00",
+    "status": "pending",
+    "signal": {
+      "strategy_id": "bot3_qlearning",
+      "symbol": "SOLUSDT",
+      "action": "sell",
+      "confidence": 0.7,
+      "size": 0.1,
+      "params": {
+        "source": "bot3_qlearning_agent",
+        "ql_action": "EXECUTE_FULL",
+        "ql_state": "trend_down|low|bearish",
+        "q_value": 0.0,
+        "price": 93.45,
+        "sl": 93.5616730723,
+        "tp": 93.2266538554,
+        "atr": 0.0744487149,
+        "regime": "trend_down",
+        "volatility": "low",
+        "momentum": "bearish"
+      }
+    }
   }
 ]

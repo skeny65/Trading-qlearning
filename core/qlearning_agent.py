@@ -11,20 +11,15 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from core.state_encoder import all_states
-
 logger = logging.getLogger("bot3.qlearning")
 
 ACTIONS = ["EXECUTE_FULL", "EXECUTE_HALF", "SKIP", "INVERT"]
-
-QTABLE_PATH = "data/qlearning/q_table.json"
-STATS_PATH  = "data/qlearning/qlearning_stats.json"
 
 
 class QLearningAgent:
     """Online Q-Learning agent for trading decisions."""
 
-    def __init__(self, config: Optional[dict] = None):
+    def __init__(self, config: Optional[dict] = None, data_dir: str = "data/qlearning"):
         cfg = config or {}
         self.alpha       = cfg.get("alpha",       float(os.getenv("QLEARNING_ALPHA_INITIAL",   "0.10")))
         self.alpha_min   = cfg.get("alpha_min",   float(os.getenv("QLEARNING_ALPHA_MIN",        "0.02")))
@@ -35,6 +30,10 @@ class QLearningAgent:
 
         self._auto_pause_window = int(os.getenv("QLEARNING_AUTO_PAUSE_WINDOW", "20"))
         self._wr_ratio          = float(os.getenv("QLEARNING_AUTO_PAUSE_WR_RATIO", "0.7"))
+
+        self._data_dir   = data_dir
+        self._qtable_path = os.path.join(data_dir, "q_table.json")
+        self._stats_path  = os.path.join(data_dir, "qlearning_stats.json")
 
         self._lock           = threading.Lock()
         self.q_table: dict   = {}
@@ -49,19 +48,19 @@ class QLearningAgent:
     # -------------------------------------------------------------------------
 
     def _load(self):
-        os.makedirs("data/qlearning", exist_ok=True)
-        if os.path.exists(QTABLE_PATH):
+        os.makedirs(self._data_dir, exist_ok=True)
+        if os.path.exists(self._qtable_path):
             try:
-                with open(QTABLE_PATH, "r") as f:
+                with open(self._qtable_path, "r") as f:
                     self.q_table = json.load(f)
-                logger.info(f"Q-table loaded: {len(self.q_table)} states")
+                logger.info(f"Q-table loaded ({self._data_dir}): {len(self.q_table)} states")
             except Exception as e:
                 logger.warning(f"Q-table load failed ({e}), starting fresh")
                 self.q_table = {}
 
-        if os.path.exists(STATS_PATH):
+        if os.path.exists(self._stats_path):
             try:
-                with open(STATS_PATH, "r") as f:
+                with open(self._stats_path, "r") as f:
                     stats = json.load(f)
                 self.alpha        = stats.get("alpha",       self.alpha)
                 self.epsilon      = stats.get("epsilon",     self.epsilon)
@@ -74,8 +73,8 @@ class QLearningAgent:
     def save(self):
         """Persist Q-table and stats to disk (thread-safe)."""
         with self._lock:
-            os.makedirs("data/qlearning", exist_ok=True)
-            with open(QTABLE_PATH, "w") as f:
+            os.makedirs(self._data_dir, exist_ok=True)
+            with open(self._qtable_path, "w") as f:
                 json.dump(self.q_table, f, indent=2)
             stats = {
                 "alpha":        self.alpha,
@@ -85,7 +84,7 @@ class QLearningAgent:
                 "baseline_wr":  self._baseline_wr,
                 "last_updated": datetime.utcnow().isoformat(),
             }
-            with open(STATS_PATH, "w") as f:
+            with open(self._stats_path, "w") as f:
                 json.dump(stats, f, indent=2)
         logger.debug("Q-table + stats saved")
 

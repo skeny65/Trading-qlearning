@@ -1,25 +1,24 @@
 """
-bot3.py - FastAPI entrypoint para Trading Bot 3 (Q-Learning).
+bot3.py - FastAPI entrypoint para Trading Bot 3 (Q-Learning Multi-Estrategia).
 
-Patron identico a bot2 (agente01.py):
-  - Recibe alertas TradingView en /webhook/tv
-  - Aplica Q-Learning para decidir accion
-  - Envia senal a bot1 via sender/webhook_client.py  (POST /webhook/bot3)
-  - Notifica via Telegram (sender/telegram_notifier.py)
-  - Registra en state/decision_log.jsonl
-  - Escribe reporte en logs/YYYY-MM-DD_HH-MM-SS.json
-  - Acumula en logs/trade_log.xlsx (utils/excel_logger.py)
+Endpoints heredados (backward-compat con estrategia 'qlearning'):
+    GET  /                              health check rapido
+    GET  /health                        estado detallado
+    POST /webhook/tv                    senales TradingView -> qlearning worker -> bot1
+    GET  /qlearning/status              estadisticas del agente qlearning
+    GET  /qlearning/qtable              Q-table completa qlearning
+    POST /qlearning/update              aprendizaje hindsight (posicion cerrada)
+    POST /qlearning/pause               pausar agente qlearning
+    POST /qlearning/resume              reanudar agente qlearning
+    GET  /pending                       decisiones pendientes de actualizacion Q
 
-Endpoints:
-    GET  /                   health check rapido
-    GET  /health             estado detallado
-    POST /webhook/tv         senales TradingView -> Q-Learning -> bot1
-    GET  /qlearning/status   estadisticas del agente
-    GET  /qlearning/qtable   Q-table completa
-    POST /qlearning/update   aprendizaje hindsight (posicion cerrada)
-    POST /qlearning/pause    pausar agente
-    POST /qlearning/resume   reanudar agente
-    GET  /pending            decisiones pendientes de actualizacion Q
+Endpoints multi-estrategia (Apuesta / QLearning / Tanque):
+    POST /webhook/strategy/{id}         senal TradingView para estrategia especifica
+    GET  /api/strategy/{id}/status      estado del worker (Q-table, epsilon, alpha)
+    POST /api/strategy/{id}/pause       pausar agente de la estrategia
+    POST /api/strategy/{id}/resume      reanudar agente de la estrategia
+    POST /api/strategy/{id}/update      hindsight update para la estrategia
+    GET  /api/strategies                lista todas las estrategias registradas
 """
 import json
 import logging
@@ -37,6 +36,7 @@ from pydantic import BaseModel
 from core.qlearning_agent      import QLearningAgent
 from core.reward_calculator    import compute_reward
 from core.tv_signal_parser     import parse_tv_envelope
+from core.strategy_registry    import StrategyRegistry
 from utils.excel_logger        import append_excel_rows
 from manager.qlearning_trainer import QLearningTrainer
 from sender                    import webhook_client, signal_formatter, telegram_notifier
@@ -186,7 +186,10 @@ async def lifespan(app: FastAPI):
     global agent, trainer, strategy
 
     # Crear directorios necesarios
-    for d in ("logs", "state", "data/qlearning"):
+    for d in (
+        "logs", "state", "data/qlearning",
+        "data/strategies/apuesta", "data/strategies/qlearning", "data/strategies/tanque",
+    ):
         Path(d).mkdir(parents=True, exist_ok=True)
 
     logger.info(
@@ -207,6 +210,10 @@ async def lifespan(app: FastAPI):
             f"Q-Learning inicializado: eps={agent.epsilon:.4f} "
             f"alpha={agent.alpha:.4f} paused={agent.paused}"
         )
+
+    # Inicializar registry multi-estrategia
+    StrategyRegistry.initialize_all()
+    logger.info(f"Estrategias registradas: {StrategyRegistry.list_all()}")
 
     telegram_notifier.startup(config.DRY_RUN, config.PORT)
 
@@ -520,6 +527,311 @@ def resume_agent():
     agent.paused = False
     agent.save()
     return {"status": "resumed"}
+
+
+# =============================================================================
+# MULTI-STRATEGY ENDPOINTS
+# =============================================================================
+
+def _send_strategy_to_bot1(
+    payload: dict,
+    event_id: str,
+    decision: dict,
+    worker,
+):
+    """Background task: envia a bot1 y registra resultado para una estrategia."""
+    strategy_id = decision["strategy_id"]
+    ticker      = decision["symbol"]
+    side        = decision["side"]
+    final_size  = decision["size"]
+    ql_action   = decision["ql_action"]
+    state       = decision["state"]
+    q_value     = decision["q_value"]
+
+    wh_response    = webhook_client.send(payload)
+    webhook_status = wh_response.get("status", "unknown")
+    order_id       = wh_response.get("order_id", event_id)
+
+    if webhook_status == "dry_run":
+        order_id = f"dry_{ticker}_{event_id}"
+        logger.info(f"[{strategy_id}|{ticker}] DRY_RUN: {ql_action} {side} size={final_size}")
+        telegram_notifier.signal_sent(ticker, side, final_size, ql_action, state, True)
+    elif webhook_status == "executed":
+        logger.info(f"[{strategy_id}|{ticker}] bot1 ejecuto: {side} size={final_size} order={order_id}")
+        telegram_notifier.signal_sent(ticker, side, final_size, ql_action, state, False)
+    elif webhook_status == "rejected":
+        reason = wh_response.get("reason", "sin razon")
+        logger.warning(f"[{strategy_id}|{ticker}] bot1 rechazo: {reason}")
+        telegram_notifier.signal_rejected(ticker, reason)
+    elif webhook_status == "failed":
+        error = wh_response.get("error", "error de red")
+        logger.error(f"[{strategy_id}|{ticker}] Fallo de red: {error}")
+        telegram_notifier.webhook_failed(ticker, error)
+
+    if webhook_status in ("dry_run", "executed"):
+        pending_q_decisions[order_id] = {
+            "state":         state,
+            "action":        ql_action,
+            "timestamp":     datetime.now(timezone.utc).isoformat(),
+            "ticker":        ticker,
+            "original_side": decision["original_action"],
+            "executed_side": side,
+            "strategy_id":   strategy_id,
+        }
+
+    log_entry = {
+        "event_id":       event_id,
+        "strategy_id":    strategy_id,
+        "decision":       "EXECUTE" if webhook_status in ("dry_run", "executed") else "FAILED",
+        "ql_action":      ql_action,
+        "symbol":         ticker,
+        "action":         side,
+        "state":          state,
+        "q_value":        q_value,
+        "size":           final_size,
+        "webhook_status": webhook_status,
+        "order_id":       order_id,
+        "reason":         decision["reason"],
+        "dry_run":        config.DRY_RUN,
+    }
+    _log_decision(log_entry)
+    _write_event_report(log_entry)
+    worker.trainer.save_and_backup()
+
+
+@app.post("/webhook/strategy/{strategy_id}")
+async def webhook_strategy(
+    strategy_id: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    x_webhook_secret: Optional[str] = Header(None),
+):
+    """
+    Recibe alertas TradingView para una estrategia especifica.
+    Ruta: POST /webhook/strategy/apuesta | /webhook/strategy/qlearning | /webhook/strategy/tanque
+    """
+    _check_ip(request)
+    query_secret = request.query_params.get("secret")
+    _check_secret(x_webhook_secret, query_secret)
+
+    worker = StrategyRegistry.get(strategy_id)
+    if not worker:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Estrategia '{strategy_id}' no registrada. Disponibles: {StrategyRegistry.list_all()}",
+        )
+
+    try:
+        raw  = await request.body()
+        body = json.loads(raw.strip())
+    except Exception:
+        raise HTTPException(status_code=400, detail="JSON invalido")
+
+    logger.info(
+        f"[{strategy_id}] TV webhook recibido: source={body.get('source')} "
+        f"status={body.get('status')}"
+    )
+
+    if body.get("status") != "pending":
+        return {
+            "status":    "received_no_signal",
+            "strategy":  strategy_id,
+            "detail":    f"status={body.get('status')} - sin accion",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+    try:
+        decision = worker.decide(body)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Error al procesar senal: {e}")
+
+    ticker          = decision["symbol"]
+    original_action = decision["original_action"]
+    ql_action       = decision["ql_action"]
+    execute         = decision["execute"]
+    side            = decision["side"]
+    state           = decision["state"]
+    q_value         = decision["q_value"]
+    final_size      = decision["size"]
+
+    event_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S%f")
+
+    # -- Si Q-Learning descarta la senal --
+    if not execute:
+        logger.info(f"[{strategy_id}|{ticker}] Senal descartada: {ql_action}")
+        telegram_notifier.signal_skipped(ticker, ql_action, state, q_value)
+
+        log_entry = {
+            "event_id":    event_id,
+            "strategy_id": strategy_id,
+            "decision":    "SKIP",
+            "ql_action":   ql_action,
+            "symbol":      ticker,
+            "state":       state,
+            "q_value":     q_value,
+            "reason":      decision["reason"],
+        }
+        _log_decision(log_entry)
+        background_tasks.add_task(_write_event_report, {**log_entry, "dry_run": config.DRY_RUN})
+
+        return {
+            "strategy":        strategy_id,
+            "ticker":          ticker,
+            "original_action": original_action,
+            "ql_action":       ql_action,
+            "state":           state,
+            "q_value":         q_value,
+            "execute":         False,
+            "status":          "skipped_by_qlearning",
+            "reason":          decision["reason"],
+            "timestamp":       datetime.now(timezone.utc).isoformat(),
+        }
+
+    # -- Construir payload para bot1 --
+    params = decision.get("params", {})
+    payload = signal_formatter.build_payload(
+        symbol      = ticker,
+        action      = side,
+        confidence  = decision["confidence"],
+        size        = final_size,
+        ql_action   = ql_action,
+        ql_state    = state,
+        q_value     = q_value,
+        regime      = params.get("regime",     ""),
+        volatility  = params.get("volatility", ""),
+        momentum    = params.get("momentum",   ""),
+        price       = float(params.get("price", 0.0)),
+        sl          = float(params.get("sl",    0.0)),
+        tp          = float(params.get("tp",    0.0)),
+        atr         = float(params.get("atr",   0.0)),
+        strategy_id = f"bot3_{strategy_id}",
+        extra_params= {"source_strategy": strategy_id},
+    )
+
+    # Enviar a bot1 en background (no bloquear TradingView)
+    background_tasks.add_task(
+        _send_strategy_to_bot1,
+        payload, event_id, decision, worker,
+    )
+
+    return {
+        "strategy":        strategy_id,
+        "ticker":          ticker,
+        "original_action": original_action,
+        "ql_action":       ql_action,
+        "state":           state,
+        "q_value":         q_value,
+        "execute":         True,
+        "side":            side,
+        "size":            final_size,
+        "status":          "queued",
+        "event_id":        event_id,
+        "dry_run":         config.DRY_RUN,
+        "reason":          decision["reason"],
+        "timestamp":       datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@app.get("/api/strategies")
+def list_strategies():
+    """Lista todas las estrategias registradas y su estado."""
+    result = {}
+    for sid in StrategyRegistry.list_all():
+        w = StrategyRegistry.get(sid)
+        result[sid] = w.get_status() if w else {"error": "worker not found"}
+    return {"strategies": result, "count": len(result)}
+
+
+@app.get("/api/strategy/{strategy_id}/status")
+def strategy_status(strategy_id: str):
+    worker = StrategyRegistry.get(strategy_id)
+    if not worker:
+        raise HTTPException(status_code=404, detail=f"Strategy '{strategy_id}' no encontrada")
+    return worker.get_status()
+
+
+@app.post("/api/strategy/{strategy_id}/pause")
+def strategy_pause(strategy_id: str):
+    worker = StrategyRegistry.get(strategy_id)
+    if not worker:
+        raise HTTPException(status_code=404, detail=f"Strategy '{strategy_id}' no encontrada")
+    worker.agent.paused = True
+    worker.agent.save()
+    return {"strategy": strategy_id, "status": "paused"}
+
+
+@app.post("/api/strategy/{strategy_id}/resume")
+def strategy_resume(strategy_id: str):
+    worker = StrategyRegistry.get(strategy_id)
+    if not worker:
+        raise HTTPException(status_code=404, detail=f"Strategy '{strategy_id}' no encontrada")
+    worker.agent.paused = False
+    worker.agent.save()
+    return {"strategy": strategy_id, "status": "resumed"}
+
+
+@app.post("/api/strategy/{strategy_id}/update")
+async def strategy_update(strategy_id: str, req: UpdateRequest):
+    """Hindsight Q-Learning update para una estrategia especifica."""
+    worker = StrategyRegistry.get(strategy_id)
+    if not worker:
+        raise HTTPException(status_code=404, detail=f"Strategy '{strategy_id}' no encontrada")
+
+    if req.order_id not in pending_q_decisions:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Order '{req.order_id}' no encontrada en decisiones pendientes",
+        )
+
+    pending = pending_q_decisions.pop(req.order_id)
+    if pending.get("strategy_id") != strategy_id:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Order '{req.order_id}' pertenece a estrategia '{pending.get('strategy_id')}', no '{strategy_id}'",
+        )
+
+    state      = pending["state"]
+    action     = pending["action"]
+    next_state = req.next_state or state
+
+    trade_result = {
+        "pnl_pct":              req.pnl_pct,
+        "duration_min":         req.duration_min,
+        "account_drawdown_pct": req.account_drawdown_pct,
+        "r_multiple":           req.r_multiple,
+    }
+    reward = compute_reward(trade_result)
+    new_q  = worker.update_q(state, action, reward, next_state)
+
+    if worker.agent.check_degradation():
+        worker.agent.paused = True
+        logger.warning(f"[{strategy_id}] Auto-pausa activada por degradacion")
+        telegram_notifier.agent_paused(f"[{strategy_id}] win_rate bajo umbral")
+
+    _log_decision({
+        "event_id":    f"update_{req.order_id}",
+        "strategy_id": strategy_id,
+        "decision":    "HINDSIGHT_UPDATE",
+        "state":       state,
+        "action":      action,
+        "reward":      reward,
+        "new_q":       round(new_q, 6),
+        "pnl_pct":     req.pnl_pct,
+    })
+
+    return {
+        "strategy":    strategy_id,
+        "order_id":    req.order_id,
+        "state":       state,
+        "action":      action,
+        "pnl_pct":     req.pnl_pct,
+        "reward":      reward,
+        "new_q_value": round(new_q, 6),
+        "next_state":  next_state,
+        "agent_paused": worker.agent.paused,
+        "alpha":       round(worker.agent.alpha,   6),
+        "epsilon":     round(worker.agent.epsilon, 6),
+    }
 
 
 if __name__ == "__main__":
