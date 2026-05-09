@@ -37,6 +37,7 @@ from core.qlearning_agent      import QLearningAgent
 from core.reward_calculator    import compute_reward
 from core.tv_signal_parser     import parse_tv_envelope
 from core.strategy_registry    import StrategyRegistry
+from manager.price_poller      import PricePoller
 from utils.excel_logger        import append_excel_rows
 from manager.qlearning_trainer import QLearningTrainer
 from sender                    import webhook_client, signal_formatter, telegram_notifier
@@ -51,23 +52,29 @@ agent:    Optional[QLearningAgent]      = None
 trainer:  Optional[QLearningTrainer]   = None
 strategy: Optional[TVQLearningStrategy] = None
 
-# {order_id: {state, action, timestamp, ticker, original_side, executed_side}}
+# {order_id: {state, action, timestamp, ticker, original_side, executed_side,
+#              strategy_id, symbol, side, entry_price, sl, tp, open_time}}
 pending_q_decisions: dict = {}
+poller: Optional[PricePoller] = None
 
-# -- helpers de persistencia (patron bot2) -------------------------------------
-
-_DECISION_LOG = Path("state") / "decision_log.jsonl"
+# -- helpers de persistencia ---------------------------------------------------
 
 
-def _log_decision(entry: dict) -> None:
-    """Append una decision a state/decision_log.jsonl."""
-    _DECISION_LOG.parent.mkdir(parents=True, exist_ok=True)
+def _decision_log_path(strategy_id: str) -> Path:
+    return Path("state") / strategy_id / "decision_log.jsonl"
+
+
+def _log_decision(entry: dict, strategy_id: str = "qlearning") -> None:
+    """Append una decision a state/{strategy_id}/decision_log.jsonl."""
+    path = _decision_log_path(strategy_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
     entry.setdefault("logged_at", datetime.now(timezone.utc).isoformat())
+    entry.setdefault("strategy_id", strategy_id)
     try:
-        with open(_DECISION_LOG, "a", encoding="utf-8") as f:
+        with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\n")
     except Exception as e:
-        logger.warning(f"No se pudo escribir decision_log: {e}")
+        logger.warning(f"No se pudo escribir decision_log [{strategy_id}]: {e}")
 
 
 def _send_to_bot1_and_track(
@@ -103,10 +110,19 @@ def _send_to_bot1_and_track(
             "ticker":        ticker,
             "original_side": original_action,
             "executed_side": side,
+            # campos para PricePoller
+            "strategy_id":   "qlearning",
+            "symbol":        ticker,
+            "side":          side,
+            "entry_price":   getattr(getattr(signal, "params", None), "price", 0.0),
+            "sl":            getattr(getattr(signal, "params", None), "sl",    0.0),
+            "tp":            getattr(getattr(signal, "params", None), "tp",    0.0),
+            "open_time":     datetime.now(timezone.utc).isoformat(),
         }
 
     log_entry = {
         "event_id":       event_id,
+        "strategy_id":    "qlearning",
         "decision":       "EXECUTE" if webhook_status in ("dry_run", "executed") else "FAILED",
         "ql_action":      ql_action,
         "symbol":         ticker,
@@ -119,24 +135,26 @@ def _send_to_bot1_and_track(
         "reason":         decision["reason"],
         "dry_run":        config.DRY_RUN,
     }
-    _log_decision(log_entry)
-    append_excel_rows([_build_excel_row(
-        event_id, ticker, original_action, decision, True, webhook_status, order_id, signal
-    )])
-    _write_event_report(log_entry)
+    _log_decision(log_entry, strategy_id="qlearning")
+    append_excel_rows(
+        [_build_excel_row(event_id, ticker, original_action, decision, True, webhook_status, order_id, signal)],
+        strategy_id="qlearning",
+    )
+    _write_event_report(log_entry, strategy_id="qlearning")
     if trainer:
         trainer.save_and_backup()
 
 
-def _write_event_report(report: dict) -> None:
-    """Escribe un reporte JSON en logs/YYYY-MM-DD_HH-MM-SS.json."""
-    Path("logs").mkdir(parents=True, exist_ok=True)
-    ts      = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S")
-    fpath   = Path("logs") / f"{ts}.json"
+def _write_event_report(report: dict, strategy_id: str = "qlearning") -> None:
+    """Escribe un reporte JSON en logs/{strategy_id}/events/YYYY-MM-DD_HH-MM-SS.json."""
+    events_dir = Path("logs") / strategy_id / "events"
+    events_dir.mkdir(parents=True, exist_ok=True)
+    ts    = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S")
+    fpath = events_dir / f"{ts}.json"
     try:
         fpath.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
     except Exception as e:
-        logger.warning(f"No se pudo escribir reporte: {e}")
+        logger.warning(f"No se pudo escribir reporte [{strategy_id}]: {e}")
 
 
 def _build_excel_row(
@@ -149,10 +167,12 @@ def _build_excel_row(
     order_id: str,
     envelope_signal,
 ) -> dict:
+    """Fila Excel para el endpoint legacy /webhook/tv (TVEnvelope)."""
     params = envelope_signal.params
     return {
         "timestamp_utc":  datetime.now(timezone.utc).isoformat(),
         "event_id":       event_id,
+        "strategy_id":    "qlearning",
         "mode":           "DRY_RUN" if config.DRY_RUN else "LIVE",
         "symbol":         symbol,
         "tv_action":      tv_action,
@@ -178,17 +198,60 @@ def _build_excel_row(
     }
 
 
+def _build_excel_row_strategy(
+    event_id:       str,
+    decision:       dict,
+    execute:        bool,
+    webhook_status: str,
+    order_id:       str,
+    worker,
+) -> dict:
+    """Fila Excel para el endpoint /webhook/strategy/{id} (decision dict generico)."""
+    params = decision.get("params", {})
+    return {
+        "timestamp_utc":  datetime.now(timezone.utc).isoformat(),
+        "event_id":       event_id,
+        "strategy_id":    decision.get("strategy_id", ""),
+        "mode":           "DRY_RUN" if config.DRY_RUN else "LIVE",
+        "symbol":         decision.get("symbol", ""),
+        "tv_action":      decision.get("original_action", ""),
+        "ql_action":      decision.get("ql_action", ""),
+        "ql_state":       decision.get("state", ""),
+        "q_value":        round(decision.get("q_value", 0.0), 6),
+        "regime":         params.get("regime",     ""),
+        "volatility":     params.get("volatility", ""),
+        "momentum":       params.get("momentum",   ""),
+        "price":          params.get("price",      0.0),
+        "sl":             params.get("sl",         0.0),
+        "tp":             params.get("tp",         0.0),
+        "atr":            params.get("atr",        0.0),
+        "execute":        execute,
+        "final_action":   decision.get("side", "none") if execute else "none",
+        "size":           decision.get("size", 0.0),
+        "confidence":     decision.get("confidence", 0.0),
+        "webhook_status": webhook_status,
+        "order_id":       order_id,
+        "reason":         decision.get("reason", ""),
+        "epsilon":        round(worker.agent.epsilon, 6) if worker else "",
+        "alpha":          round(worker.agent.alpha,   6) if worker else "",
+    }
+
+
 # -- lifespan ------------------------------------------------------------------
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global agent, trainer, strategy
+    global agent, trainer, strategy, poller
 
     # Crear directorios necesarios
     for d in (
         "logs", "state", "data/qlearning",
         "data/strategies/apuesta", "data/strategies/qlearning", "data/strategies/tanque",
+        # logs separados por estrategia
+        "logs/apuesta/events", "logs/qlearning/events", "logs/tanque/events",
+        # decision logs separados por estrategia
+        "state/apuesta", "state/qlearning", "state/tanque",
     ):
         Path(d).mkdir(parents=True, exist_ok=True)
 
@@ -215,10 +278,16 @@ async def lifespan(app: FastAPI):
     StrategyRegistry.initialize_all()
     logger.info(f"Estrategias registradas: {StrategyRegistry.list_all()}")
 
+    # Arrancar price poller (monitor independiente de posiciones)
+    poller = PricePoller(pending_q_decisions, StrategyRegistry)
+    poller.start()
+
     telegram_notifier.startup(config.DRY_RUN, config.PORT)
 
     yield
 
+    if poller:
+        poller.stop()
     if agent:
         agent.save()
         logger.info("Q-table guardada al cerrar")
@@ -269,6 +338,8 @@ def health():
         "epsilon":           round(agent.epsilon, 4) if agent else None,
         "alpha":             round(agent.alpha,   4) if agent else None,
         "pending_decisions": len(pending_q_decisions),
+        "price_poller":      poller.get_status() if poller else None,
+        "strategies":        StrategyRegistry.list_all(),
         "webhook_url":       config.WEBHOOK_URL,
         "timestamp":         datetime.now(timezone.utc).isoformat(),
     }
@@ -361,8 +432,8 @@ async def webhook_tv(
         excel_row = _build_excel_row(
             event_id, ticker, original_action, decision, False, "skipped", "", signal
         )
-        background_tasks.add_task(append_excel_rows, [excel_row])
-        background_tasks.add_task(_write_event_report, {**log_entry, "dry_run": config.DRY_RUN})
+        background_tasks.add_task(append_excel_rows, [excel_row], "qlearning")
+        background_tasks.add_task(_write_event_report, {**log_entry, "dry_run": config.DRY_RUN}, "qlearning")
 
         return {
             "ticker":          ticker,
@@ -569,6 +640,7 @@ def _send_strategy_to_bot1(
         telegram_notifier.webhook_failed(ticker, error)
 
     if webhook_status in ("dry_run", "executed"):
+        params = decision.get("params", {})
         pending_q_decisions[order_id] = {
             "state":         state,
             "action":        ql_action,
@@ -576,7 +648,14 @@ def _send_strategy_to_bot1(
             "ticker":        ticker,
             "original_side": decision["original_action"],
             "executed_side": side,
+            # campos para PricePoller
             "strategy_id":   strategy_id,
+            "symbol":        ticker,
+            "side":          side,
+            "entry_price":   float(params.get("price", 0.0)),
+            "sl":            float(params.get("sl",    0.0)),
+            "tp":            float(params.get("tp",    0.0)),
+            "open_time":     datetime.now(timezone.utc).isoformat(),
         }
 
     log_entry = {
@@ -594,8 +673,12 @@ def _send_strategy_to_bot1(
         "reason":         decision["reason"],
         "dry_run":        config.DRY_RUN,
     }
-    _log_decision(log_entry)
-    _write_event_report(log_entry)
+    _log_decision(log_entry, strategy_id=strategy_id)
+    append_excel_rows(
+        [_build_excel_row_strategy(event_id, decision, True, webhook_status, order_id, worker)],
+        strategy_id=strategy_id,
+    )
+    _write_event_report(log_entry, strategy_id=strategy_id)
     worker.trainer.save_and_backup()
 
 
@@ -672,7 +755,7 @@ async def webhook_strategy(
             "reason":      decision["reason"],
         }
         _log_decision(log_entry)
-        background_tasks.add_task(_write_event_report, {**log_entry, "dry_run": config.DRY_RUN})
+        background_tasks.add_task(_write_event_report, {**log_entry, "dry_run": config.DRY_RUN}, strategy_id)
 
         return {
             "strategy":        strategy_id,
@@ -832,6 +915,37 @@ async def strategy_update(strategy_id: str, req: UpdateRequest):
         "alpha":       round(worker.agent.alpha,   6),
         "epsilon":     round(worker.agent.epsilon, 6),
     }
+
+
+@app.get("/api/strategy/{strategy_id}/journal")
+def strategy_journal(strategy_id: str, n: int = 20):
+    """Ultimas N entradas del diario de aprendizaje de una estrategia."""
+    worker = StrategyRegistry.get(strategy_id)
+    if not worker:
+        raise HTTPException(status_code=404, detail=f"Strategy '{strategy_id}' no encontrada")
+    return worker.journal.get_summary(worker.agent.q_table)
+
+
+@app.get("/api/strategy/{strategy_id}/journal/recent")
+def strategy_journal_recent(strategy_id: str, n: int = 20):
+    """Ultimas N entradas raw del journal."""
+    worker = StrategyRegistry.get(strategy_id)
+    if not worker:
+        raise HTTPException(status_code=404, detail=f"Strategy '{strategy_id}' no encontrada")
+    return {"entries": worker.journal.get_recent(n), "count": n}
+
+
+@app.post("/api/strategy/{strategy_id}/journal/report")
+def strategy_journal_report(strategy_id: str):
+    """Genera el reporte diario .md para la estrategia y lo retorna."""
+    worker = StrategyRegistry.get(strategy_id)
+    if not worker:
+        raise HTTPException(status_code=404, detail=f"Strategy '{strategy_id}' no encontrada")
+    content = worker.journal.generate_daily_report(
+        q_table=worker.agent.q_table,
+        agent_stats={"epsilon": worker.agent.epsilon, "alpha": worker.agent.alpha},
+    )
+    return {"strategy": strategy_id, "report": content}
 
 
 if __name__ == "__main__":

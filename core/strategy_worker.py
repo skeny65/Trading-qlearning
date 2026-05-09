@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 
 from core.qlearning_agent import QLearningAgent
 from manager.qlearning_trainer import QLearningTrainer
+from manager.learning_journal import LearningJournal
 
 logger = logging.getLogger("bot3.strategy_worker")
 
@@ -33,6 +34,7 @@ class StrategyWorker(ABC):
         data_dir = f"data/strategies/{self.strategy_id}"
         self.agent   = QLearningAgent(data_dir=data_dir)
         self.trainer = QLearningTrainer(self.agent, data_dir=data_dir)
+        self.journal = LearningJournal(self.strategy_id)
         logger.info(
             f"[{self.strategy_id}] Worker inicializado | "
             f"eps={self.agent.epsilon:.4f} alpha={self.agent.alpha:.4f}"
@@ -138,17 +140,24 @@ class StrategyWorker(ABC):
         action:     str,
         reward:     float,
         next_state: str,
+        trade_meta: dict = None,
     ) -> float:
-        """Update Q-table and decay params. Returns new Q value."""
+        """Update Q-table, decay params, write journal entry. Returns new Q value."""
+        old_q = self.agent.get_q_values(state).get(action, 0.0)
         new_q = self.agent.update(state, action, reward, next_state)
         self.agent.decay_params()
         self.agent.record_reward(reward)
         self.trainer.append_experience(state, action, reward, next_state)
         self.trainer.save_and_backup()
-        logger.info(
-            f"[{self.strategy_id}] Q-update: {state} -> {action} "
-            f"reward={reward:.4f} new_q={new_q:.6f}"
+
+        # Registrar en el diario de aprendizaje
+        self.journal.record_update(
+            state=state, action=action, reward=reward,
+            old_q=old_q, new_q=new_q,
+            q_table=self.agent.q_table,
+            trade_meta=trade_meta,
         )
+
         return new_q
 
     # -------------------------------------------------------------------------

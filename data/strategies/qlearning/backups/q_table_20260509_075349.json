@@ -1,0 +1,50 @@
+{
+  "trend_up|low|bullish": {
+    "EXECUTE_FULL": 0.0,
+    "EXECUTE_HALF": 0.0,
+    "SKIP": 0.0,
+    "INVERT": 0.0
+  },
+  "trend_up|mid|bullish": {
+    "EXECUTE_FULL": 0.4469263,
+    "EXECUTE_HALF": 0.0,
+    "SKIP": 0.0,
+    "INVERT": 0.0
+  },
+  "range|low|bullish": {
+    "EXECUTE_FULL": 0.0,
+    "EXECUTE_HALF": 0.0,
+    "SKIP": 0.0,
+    "INVERT": 0.0
+  },
+  "range|low|bearish": {
+    "EXECUTE_FULL": 0.0,
+    "EXECUTE_HALF": 0.0,
+    "SKIP": 0.0,
+    "INVERT": 0.0
+  },
+  "trend_up|bullish|breakout|bull|extreme": {
+    "EXECUTE_FULL": 1.6924373528570373,
+    "EXECUTE_HALF": 0.0,
+    "SKIP": 0.0,
+    "INVERT": 0.0
+  },
+  "range|bearish|breakout|bull|weak": {
+    "EXECUTE_FULL": -0.9373105304647495,
+    "EXECUTE_HALF": 0.0,
+    "SKIP": 0.0,
+    "INVERT": 0.0
+  },
+  "trend_up|bullish|pullback|bull|strong": {
+    "EXECUTE_FULL": 0.5271107209877883,
+    "EXECUTE_HALF": 0.0,
+    "SKIP": 0.0,
+    "INVERT": 0.0
+  },
+  "trend_down|bearish|trend|bear|extreme": {
+    "EXECUTE_FULL": 0.8377630262584744,
+    "EXECUTE_HALF": 0.0,
+    "SKIP": 0.0,
+    "INVERT": 0.0
+  }
+}

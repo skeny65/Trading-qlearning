@@ -1,158 +1,191 @@
-# Flujo End-to-End — bot3-qlearning
+# Flujo End-to-End - bot3 Multi-Strategy
 
-## Flujo completo: TradingView -> Q-Learning -> bot1 -> Alpaca
+## Flujo completo: TradingView -> Q-Learning -> bot1 -> Alpaca -> aprendizaje automatico
 
 ```
-+-----------------+
-|   TradingView   |
-|   .pine alert   |  (o curl/PowerShell en tests manuales)
-+--------+--------+
++-------------------+
+|   TradingView     |
+|   .pine alert     |
++--------+----------+
          |
-         |  POST http://<ngrok>/webhook/tv          (produccion)
-         |  POST http://localhost:8001/webhook/tv    (tests locales)
+         |  POST http://<ngrok>/webhook/strategy/qlearning
          |  Header: X-Webhook-Secret: <TV_WEBHOOK_SECRET>
-         |  Body: JSON envelope con regime, volatility, momentum
+         |  Body: JSON envelope con strategy params (ver webhook_format.md)
          v
-+--------------------------------------------+
-|          bot3.py — localhost:8001          |
-|                                            |
-|  1. Validar TV_WEBHOOK_SECRET (401)        |
-|  2. Validar IP si TV_ENFORCE_IP=true (403) |
-|  3. Parsear envelope (422 si invalido)     |
-|  4. Si status != "pending" -> 200 silente  |
-|                                            |
-|  +--------------------------------------+  |
-|  |       tv_signal_parser               |  |
-|  |  parse_tv_envelope() -> TVEnvelope   |  |
-|  +----------------+---------------------+  |
-|                   |                        |
-|  +----------------v---------------------+  |
-|  |       state_encoder                  |  |
-|  |  regime x volatility x momentum      |  |
-|  |  -> "trend_up|mid|bullish" (27 est.) |  |
-|  +----------------+---------------------+  |
-|                   |                        |
-|  +----------------v---------------------+  |
-|  |       QLearningAgent (epsilon-greedy)|  |
-|  |  choose_action(state) ->             |  |
-|  |    EXECUTE_FULL / EXECUTE_HALF /     |  |
-|  |    SKIP / INVERT                     |  |
-|  +----------------+---------------------+  |
-|                   |                        |
-|  +----------------v---------------------+  |
-|  |     TVQLearningStrategy.decide()     |  |
-|  |  SKIP   -> return, no sigue          |  |
-|  |  HALF   -> size *= 0.5              |  |
-|  |  INVERT -> flip buy<->sell, *0.5    |  |
-|  |  FULL   -> size sin cambio          |  |
-|  +----------------+---------------------+  |
-|                   | (si execute=True)      |
-|  +----------------v---------------------+  |
-|  |     webhook_client.send()            |  |
-|  |  POST http://127.0.0.1:8000          |  |
-|  |       /webhook/bot3                  |  |
-|  |  Header: X-Webhook-Secret:           |  |
-|  |          <BOT1_WEBHOOK_SECRET>       |  |
-|  |  Backoff: 5s -> 10s -> 15s          |  |
-|  +----------------+---------------------+  |
-|                   |                        |
-|  pending_q_decisions[order_id] = {state, action}
-|                                            |
-+--------------------------------------------+
-         |
-         v (conexion localhost, < 1ms)
-+--------------------------------------------+
-|          bot1.py — localhost:8000          |
-|                                            |
-|  POST /webhook/bot3                        |
-|  1. Valida BOT3_WEBHOOK_SECRET             |
-|  2. Valida IP (localhost only)             |
-|  3. Verifica bot3_qlearning en KNOWN_BOTS  |
-|  4. Ejecuta orden en Alpaca                |
-|  5. Loguea en data/bot3_decisions.jsonl    |
-|  -> {"status": "executed", "order_id": UUID}
-|                                            |
-+--------------------------------------------+
-         |
-         v
-+--------------------------------------------+
-|           Alpaca API (live / paper)        |
-|  Orden ejecutada                           |
-|  order_id: 759b9684-528d-47cc-b54a-...    |  <- confirmado 2026-05-06
-+--------------------------------------------+
-
-bot3 guarda en state/decision_log.jsonl:
-  {event_id, ql_action, state, symbol, size, order_id, ...}
-
-bot3 guarda en logs/YYYY-MM-DD_HH-MM-SS.json:
-  reporte completo por evento
++-----------------------------------------------------------+
+|              bot3.py -- localhost:8001                    |
+|                                                           |
+|  1. Verificar X-Webhook-Secret (401 si falla)             |
+|  2. Verificar IP si TV_ENFORCE_IP=true (403 si falla)     |
+|  3. Parsear envelope                                      |
+|  4. Si status != "pending" -> 200 silente, no accion      |
+|                                                           |
+|  5. StrategyRegistry.get("qlearning")                     |
+|     -> QLearningWorker                                    |
+|                                                           |
+|  +-----------------------------------------------------+  |
+|  |  QLearningWorker.decide(body)                       |  |
+|  |                                                     |  |
+|  |  parse_signal(body):                                |  |
+|  |    symbol="SOLUSDT", action="buy", params={...}     |  |
+|  |                                                     |  |
+|  |  encode_state(params):                              |  |
+|  |    regime="trend_up", momentum="bullish"            |  |
+|  |    setup_type="breakout", htf_bias="bull"           |  |
+|  |    trend_strength="extreme"                         |  |
+|  |    -> "trend_up|bullish|breakout|bull|extreme"      |  |
+|  |                                                     |  |
+|  |  agent.choose_action(state) [epsilon-greedy]:       |  |
+|  |    70% explota -> accion con Q mas alto             |  |
+|  |    30% explora -> accion aleatoria                  |  |
+|  |    -> "EXECUTE_FULL"                                |  |
+|  |                                                     |  |
+|  |  EXECUTE_FULL  -> side=buy,   size*1.0, execute=T  |  |
+|  |  EXECUTE_HALF  -> side=buy,   size*0.5, execute=T  |  |
+|  |  SKIP          -> execute=False, retorna            |  |
+|  |  INVERT        -> side=sell,  size*0.5, execute=T  |  |
+|  +-----------------------------------------------------+  |
+|                                                           |
+|  6. Si execute=True:                                      |
+|     webhook_client.send() -> POST /webhook/bot3           |
+|     pending_q_decisions[order_id] = {                     |
+|       strategy_id: "qlearning"                            |
+|       state:   "trend_up|bullish|breakout|bull|extreme"   |
+|       action:  "EXECUTE_FULL"                             |
+|       symbol:  "SOLUSDT"                                  |
+|       side:    "buy"                                      |
+|       entry_price: 93.73                                  |
+|       sl: 93.63, tp: 93.93                                |
+|       open_time: <timestamp>                              |
+|     }                                                     |
+|                                                           |
+|  7. Persistencia:                                         |
+|     state/qlearning/decision_log.jsonl                    |
+|     logs/qlearning/events/YYYY-MM-DD_HH-MM-SS.json        |
+|     logs/qlearning/trade_log.xlsx                         |
++----------------------------+------------------------------+
+                             |
+                             v
++-----------------------------------------------------------+
+|              bot1.py -- localhost:8000                    |
+|  1. Valida BOT3_WEBHOOK_SECRET                            |
+|  2. Valida IP (localhost only)                            |
+|  3. Ejecuta en Alpaca                                     |
+|  -> {"status": "executed", "order_id": "<uuid>"}          |
++-----------------------------------------------------------+
+                             |
+                             v
++-----------------------------------------------------------+
+|              Alpaca API (live / paper)                    |
+|  Orden ejecutada                                          |
++-----------------------------------------------------------+
 ```
 
 ---
 
-## Flujo de aprendizaje: cierre de posicion
+## Flujo de aprendizaje automatico (Price Poller)
 
-Cuando la posicion cierra (TP, SL, o manual), enviar a bot3:
+El Price Poller corre en un hilo separado, independiente del servidor web.
+No requiere intervencion manual. Cierra el ciclo de aprendizaje solo.
 
 ```
-POST http://localhost:8001/qlearning/update
-{
-  "order_id":              "759b9684-528d-47cc-b54a-98aa68003a5a",
-  "pnl_pct":              0.5,
-  "duration_min":         45.0,
-  "account_drawdown_pct": -1.2,
-  "r_multiple":           1.5,
-  "next_state":           "range|mid|neutral"   (opcional)
-}
-         |
-         v
-  compute_reward(trade_result)
-  r = pnl_pct - 0.05 (slippage) [- penalizaciones] [+ bonus R]
-         |
-         v
-  agent.update(s, a, r, s_next)
-  Q(s,a) <- Q(s,a) + alpha * [r + gamma * max Q(s_next) - Q(s,a)]
-         |
-         v
-  agent.decay_params()     # alpha *= 0.999, epsilon *= 0.999
-  agent.check_degradation() # auto-pausa si WR < baseline * 0.7
-         |
-         v
-  trainer.append_experience() -> data/qlearning/replay_buffer.jsonl
-  agent.save()             -> data/qlearning/q_table.json
++-----------------------------------------------------------+
+|  manager/price_poller.py  (hilo daemon, cada 30s)         |
+|                                                           |
+|  Para cada entrada en pending_q_decisions:                |
+|    Si no tiene entry_price/sl/tp -> saltar                |
+|                                                           |
+|    GET https://api.binance.com/api/v3/ticker/price        |
+|        ?symbol=SOLUSDT                                    |
+|    -> {"symbol":"SOLUSDT","price":"93.84"}                |
+|                                                           |
+|    Evaluar resultado:                                     |
+|      buy:  precio >= tp -> TP HIT -> reward = +0.40       |
+|            precio <= sl -> SL HIT -> reward = -0.40       |
+|      sell: precio <= tp -> TP HIT -> reward = +0.40       |
+|            precio >= sl -> SL HIT -> reward = -0.40       |
+|      Si lleva > 24h sin cierre -> EXPIRED -> reward = 0   |
+|                                                           |
+|    Llamar worker.update_q(state, action, reward, s_next)  |
+|    Remover de pending_q_decisions                         |
++----------------------------+------------------------------+
+                             |
+                             v
++-----------------------------------------------------------+
+|  StrategyWorker.update_q()                                |
+|                                                           |
+|  old_q = agent.get_q_values(state).get(action, 0.0)      |
+|  new_q = agent.update(state, action, reward, next_state)  |
+|                                                           |
+|  Bellman:                                                 |
+|  Q(s,a) += alpha * [reward + gamma * max Q(s') - Q(s,a)] |
+|                                                           |
+|  agent.decay_params()                                     |
+|    epsilon *= 0.999  (min 0.02)                           |
+|    alpha   *= 0.999  (min 0.02)                           |
+|                                                           |
+|  trainer.append_experience(s, a, r, s_next)               |
+|    -> data/strategies/qlearning/replay_buffer.jsonl       |
+|                                                           |
+|  trainer.save_and_backup()                                |
+|    -> data/strategies/qlearning/q_table.json              |
+|    -> data/strategies/qlearning/backups/                  |
+|                                                           |
+|  journal.record_update(state, action, reward, old_q, new_q)
+|    Genera conclusion en texto:                            |
+|    "Q sube de 0.000 a 0.040 tras trade ganador            |
+|     (reward=+0.400). aprendiendo: datos insuficientes."   |
+|                                                           |
+|    -> logs/qlearning/learning_journal.jsonl               |
+|    -> logs/qlearning/INSIGHTS.md  (sobreescrito)          |
++-----------------------------------------------------------+
 ```
 
 ---
 
-## Respuesta de bot3 al webhook de TradingView
+## INSIGHTS.md - Ejemplo de lo que aprende el agente
 
-```json
-{
-  "ticker":          "SPY",
-  "original_action": "buy",
-  "ql_action":       "EXECUTE_FULL",
-  "state":           "trend_up|mid|bullish",
-  "q_value":         0.0,
-  "execute":         true,
-  "side":            "buy",
-  "size":            0.1,
-  "status":          "executed",
-  "order_id":        "759b9684-528d-47cc-b54a-98aa68003a5a",
-  "dry_run":         false,
-  "reason":          "Q-Learning: execute full position",
-  "timestamp":       "2026-05-06T21:17:39.517354+00:00"
-}
+Despues de suficientes trades, `logs/qlearning/INSIGHTS.md` contiene:
+
+```
+## Contextos RENTABLES (el agente prefiere ejecutar aqui)
+
+| Estado                                    | Accion       | Q-value |
+|-------------------------------------------|--------------|---------|
+| trend_up|bullish|breakout|bull|extreme    | EXECUTE_FULL | +0.3842 |
+| trend_up|bullish|trend|bull|strong        | EXECUTE_FULL | +0.2910 |
+
+Sugerencia para TradingView:
+Los mejores resultados ocurren cuando: trend_up + bullish + breakout + bull + extreme.
+Considera priorizar alertas en este contexto.
+
+## Contextos BLOQUEADOS (el agente descarta automaticamente)
+
+| Estado                               | Accion evitada | Q-value |
+|--------------------------------------|----------------|---------|
+| range|bearish|pullback|bear|weak     | EXECUTE_FULL   | -0.4200 |
+
+Filtros sugeridos para Pine Script:
+- Evitar entradas cuando: range + bearish + pullback + bear + weak (Q=-0.4200)
 ```
 
 ---
 
-## Flujo nocturno (reentrenamiento offline)
+## Aprendizaje manual (alternativo al Price Poller)
 
-```
-QLearningTrainer.train_from_replay(epochs=3)
-  Lee replay_buffer.jsonl completo
-  Shuffle + 3 passes Bellman update
-  Decay adicional de alpha y epsilon
-  agent.save()
-  trainer.backup_qtable() -> data/qlearning/backups/q_table_YYYYMMDD_HHMMSS.json
+Si el activo no esta en Binance (SPY, acciones US) o quieres forzar aprendizaje:
+
+```powershell
+$headers = @{ "Content-Type" = "application/json" }
+$body = @{
+    order_id              = "759b9684-528d-47cc-b54a-98aa68003a5a"
+    pnl_pct              = 0.5
+    duration_min         = 45.0
+    account_drawdown_pct = -1.2
+    r_multiple           = 1.5
+    next_state           = "range|neutral|pullback|neutral|weak"
+} | ConvertTo-Json
+
+Invoke-WebRequest -Uri http://localhost:8001/api/strategy/qlearning/update `
+    -Method POST -Headers $headers -Body $body
 ```

@@ -1,133 +1,147 @@
-# Arquitectura de bot3-qlearning
+# Arquitectura de bot3 - Multi-Strategy Q-Learning
 
-## Estado: OPERATIVO (probado 2026-05-06)
+## Estado: OPERATIVO (2026-05-06)
 
-Primera orden real ejecutada en Alpaca Live:
-- Senal: SPY BUY desde TradingView
-- `order_id: 759b9684-528d-47cc-b54a-98aa68003a5a`
+## Principio de diseno
+
+Cada proceso es completamente independiente. Cada estrategia tiene:
+- Su propia Q-table (datos separados en disco)
+- Su propio agente Q-Learning (epsilon y alpha independientes)
+- Su propio diario de aprendizaje (INSIGHTS.md exclusivo)
+- Sus propios logs (Excel, JSONL, reportes de eventos)
+
+El aprendizaje se cierra automaticamente via Price Poller sin intervenci n manual.
 
 ## Diagrama de Componentes
 
 ```
-+------------------------------------------------------------------+
-|                          bot3.py                                 |
-|              (FastAPI - puerto 8001 - event-driven)              |
-|                                                                  |
-|  Cada vez que TradingView dispara una alerta PineScript:         |
-|                                                                  |
-|  FASE 1: Validar envelope TV                                     |
-|     a. Verificar X-Webhook-Secret (TV_WEBHOOK_SECRET)            |
-|     b. Verificar IP si TV_ENFORCE_IP_WHITELIST=true              |
-|     c. parse_tv_envelope() -> TVEnvelope validado                |
-|                                                                  |
-|  FASE 2: Q-Learning Decision                                     |
-|     a. state_encoder.encode_state() -> "regime|vol|momentum"     |
-|     b. QLearningAgent.choose_action() (epsilon-greedy)           |
-|     c. TVQLearningStrategy.decide()                              |
-|        -> EXECUTE_FULL | EXECUTE_HALF | SKIP | INVERT            |
-|                                                                  |
-|  FASE 3: Envio a bot1                                            |
-|     a. signal_formatter.build_payload() -> envelope bot1         |
-|        strategy_id: "bot3_qlearning"                            |
-|        source:      "bot3_qlearning_agent"                      |
-|     b. webhook_client.send() -> POST http://127.0.0.1:8000       |
-|                                      /webhook/bot3               |
-|        backoff: 5s -> 10s -> 15s (3 intentos)                   |
-|        status="executed"  -> exito, track en pending_q_decisions |
-|        status="rejected"  -> log + Telegram                     |
-|        status="failed"    -> state/pending_signals.json          |
-|                                                                  |
-|  FASE 4: Persistencia                                            |
-|     a. _log_decision()       -> state/decision_log.jsonl         |
-|     b. _write_event_report() -> logs/YYYY-MM-DD_HH-MM-SS.json   |
-|     c. append_excel_rows()   -> logs/trade_log.xlsx              |
-|     d. telegram_notifier.*() -> Telegram                         |
-|                                                                  |
-|  FASE 5: Hindsight Learning (POST /qlearning/update)             |
-|     Cuando la posicion cierra (manual o TP/SL):                  |
-|     a. compute_reward() -> formula: pnl_pct - slippage - penalty |
-|     b. agent.update() -> Bellman update Q(s,a)                   |
-|     c. agent.decay_params() -> alpha y epsilon decaen            |
-|     d. trainer.append_experience() -> replay_buffer.jsonl        |
-|                                                                  |
-+------------+-----------------------------------------------------+
-             |
-             |  POST http://127.0.0.1:8000/webhook/bot3
-             |  Header: X-Webhook-Secret: <BOT1_WEBHOOK_SECRET>
-             |  Latencia: < 1ms (misma maquina)
-             v
-+------------------------------------------------------------------+
-|                          bot1.py                                 |
-|              (FastAPI - puerto 8000)                             |
-|                                                                  |
-|  1. Valida BOT3_WEBHOOK_SECRET                                   |
-|  2. Valida IP origen (localhost only)                            |
-|  3. Verifica "bot3_qlearning" en KNOWN_BOTS                      |
-|  4. Ejecuta orden en Alpaca                                      |
-|  5. Loguea en data/bot3_decisions.jsonl                          |
-|  -> {"status": "executed", "order_id": "uuid"}                  |
-|                                                                  |
-+------------+-----------------------------------------------------+
-             |
-             v
-+------------------------------------------------------------------+
-|                      Alpaca API                                  |
-|              (Live Trading / Paper Trading)                      |
-|  Orden ejecutada                                                 |
-+------------------------------------------------------------------+
++----------------------------------------------------------------+
+|                  TradingView PineScript                        |
+|  Alerta configurada con:                                       |
+|    URL: http://<ngrok>/webhook/strategy/{id}                   |
+|    Secret: TV_WEBHOOK_SECRET                                   |
++------------------------+---------------------------------------+
+                         |
+                         |  POST /webhook/strategy/{id}
+                         |  Header: X-Webhook-Secret
+                         v
++----------------------------------------------------------------+
+|                    bot3.py  (FastAPI :8001)                    |
+|                                                                |
+|  FASE 1: Validacion                                            |
+|    - Verificar X-Webhook-Secret                                |
+|    - Verificar IP si TV_ENFORCE_IP_WHITELIST=true              |
+|    - status != "pending" -> ignorar silenciosamente            |
+|                                                                |
+|  FASE 2: StrategyRegistry.get(strategy_id)                     |
+|    +--------------------------------------------------+        |
+|    |  StrategyRegistry (singleton)                    |        |
+|    |    "apuesta"   -> ApuestaWorker                  |        |
+|    |    "qlearning" -> QLearningWorker                |        |
+|    |    "tanque"    -> TanqueWorker                   |        |
+|    +--------------------------------------------------+        |
+|                                                                |
+|  FASE 3: worker.decide(body)                                   |
+|    worker.parse_signal(body) -> symbol, action, params         |
+|    worker.encode_state(params) -> estado string                |
+|    agent.choose_action(state) -> epsilon-greedy                |
+|    -> EXECUTE_FULL / EXECUTE_HALF / SKIP / INVERT              |
+|                                                                |
+|  FASE 4: Envio a bot1 (si execute=True)                        |
+|    webhook_client.send() -> POST http://127.0.0.1:8000         |
+|                             /webhook/bot3                       |
+|    pending_q_decisions[order_id] = {                           |
+|      strategy_id, state, action,                               |
+|      entry_price, sl, tp, symbol, side, open_time             |
+|    }                                                           |
+|                                                                |
+|  FASE 5: Persistencia por estrategia                           |
+|    _log_decision()      -> state/{id}/decision_log.jsonl       |
+|    _write_event_report()-> logs/{id}/events/YYYY-MM-DD_*.json  |
+|    append_excel_rows()  -> logs/{id}/trade_log.xlsx            |
+|    telegram_notifier.*() -> Telegram                           |
+|                                                                |
++------------------------+---------------------------------------+
+                         |
+                         | POST http://127.0.0.1:8000/webhook/bot3
+                         v
++----------------------------------------------------------------+
+|               bot1.py  (FastAPI :8000)                        |
+|    1. Valida BOT3_WEBHOOK_SECRET                               |
+|    2. Valida IP (localhost only)                               |
+|    3. Verifica "bot3_qlearning" en KNOWN_BOTS                  |
+|    4. Ejecuta orden en Alpaca                                  |
+|    5. Retorna {"status":"executed", "order_id":"uuid"}         |
++------------------------+---------------------------------------+
+                         |
+                         v
++----------------------------------------------------------------+
+|                  Alpaca API (Live / Paper)                     |
++----------------------------------------------------------------+
 
-SENDER LAYER (dentro de bot3):
 
-  sender/webhook_client.py
-  +- DRY_RUN=true  -> solo loguea, no envia
-  +- POST a http://127.0.0.1:8000/webhook/bot3
-  |   Header: X-Webhook-Secret (BOT1_WEBHOOK_SECRET)
-  +- backoff: 5s -> 10s -> 15s (3 intentos)
-  +- failed -> state/pending_signals.json (retry al reiniciar)
+PRICE POLLER (hilo independiente):
 
-  sender/signal_formatter.py
-  +- build_payload() -> envelope compatible con bot1
-  |   strategy_id: "bot3_qlearning"
-  |   source:      "bot3_qlearning_agent"
-  +- build_no_signal_payload() -> informativo
++----------------------------------------------------------------+
+|  manager/price_poller.py                                       |
+|                                                                |
+|  Intervalo: 30 segundos                                        |
+|  Fuente: https://api.binance.com/api/v3/ticker/price           |
+|                                                                |
+|  Para cada pending_q_decisions con entry_price + sl + tp:      |
+|    GET Binance precio actual                                    |
+|    Si buy:  precio >= tp -> TP HIT (reward positivo)           |
+|             precio <= sl -> SL HIT (reward negativo)           |
+|    Si sell: precio <= tp -> TP HIT                             |
+|             precio >= sl -> SL HIT                             |
+|    Si > 24h sin cierre  -> expirar (reward neutro)             |
+|                                                                |
+|  Al detectar cierre:                                           |
+|    registry.get(strategy_id).update_q(state, action, reward)   |
+|    journal.record_update() -> INSIGHTS.md actualizado          |
++----------------------------------------------------------------+
 
-  sender/telegram_notifier.py
-  +- signal_sent()     -> ejecutado por bot1
-  +- signal_rejected() -> rechazado por bot1
-  +- webhook_failed()  -> fallo de red, en cola
-  +- signal_skipped()  -> Q-Learning descarto
-  +- agent_paused()    -> auto-pausa activada
-  +- startup()         -> bot3 arrancado
 
-Q-LEARNING LAYER (dentro de bot3):
+LEARNING LAYER (por estrategia):
 
-  core/qlearning_agent.py
-  +- Q-Table: 27 estados x 4 acciones
-  +- Epsilon-greedy: explora / explota
-  +- Bellman update al recibir reward
-  +- Auto-pause si win_rate < baseline * 0.7
-  +- Persist: data/qlearning/q_table.json
++----------------------------------------------------------------+
+|  core/strategy_worker.py (clase base abstracta)                |
+|                                                                |
+|  Cada worker tiene instancias propias de:                      |
+|    QLearningAgent(data_dir="data/strategies/{id}")             |
+|    QLearningTrainer(agent, data_dir="data/strategies/{id}")    |
+|    LearningJournal(strategy_id)                                |
+|                                                                |
+|  worker.update_q(state, action, reward, next_state):           |
+|    agent.update() -> Bellman: Q(s,a) += alpha*[r+gamma*maxQ'] |
+|    agent.decay_params() -> epsilon y alpha decaen              |
+|    trainer.append_experience() -> replay_buffer.jsonl          |
+|    trainer.save_and_backup() -> q_table.json + backup          |
+|    journal.record_update() -> learning_journal.jsonl           |
+|                           -> INSIGHTS.md (sobreescrito)        |
++----------------------------------------------------------------+
 
-  core/state_encoder.py
-  +- regime(3) x volatility(3) x momentum(3) = 27 estados
 
-  core/reward_calculator.py
-  +- r = pnl - slippage - duration_penalty + R_bonus
+ESTADO EN DISCO:
 
-  manager/qlearning_trainer.py
-  +- replay_buffer.jsonl (historial de experiencias)
-  +- Backups Q-table cada 6h (max 28)
+  data/strategies/{id}/
+    q_table.json             Q-Table persistida
+    qlearning_stats.json     alpha, epsilon, gamma actuales
+    replay_buffer.jsonl      historial de experiencias (s,a,r,s')
+    backups/                 snapshots automaticos (max 28)
 
-Estado en disco:
-  state/decision_log.jsonl    - historial de todas las decisiones
-  state/pending_signals.json  - senales en cola (retry automatico)
-  data/qlearning/q_table.json - Q-table persistida
-  logs/YYYY-MM-DD_HH-MM-SS.json - reporte por evento
-  logs/trade_log.xlsx          - Excel acumulado
+  state/{id}/
+    decision_log.jsonl       historial de todas las decisiones
+
+  logs/{id}/
+    INSIGHTS.md              resumen de aprendizaje (siempre actualizado)
+    learning_journal.jsonl   registro detallado por Q-update
+    trade_log.xlsx           Excel acumulado
+    events/                  reporte JSON por evento
 ```
 
 ## Nota importante
 
 Bot3 NO conecta directamente con Alpaca. Toda ejecucion pasa a traves de bot1.
 El `.env` de bot3 no tiene `ALPACA_API_KEY` ni `ALPACA_SECRET_KEY`.
-Ver `docs/integration_bot1.md` para los detalles de la integracion.
+El Price Poller usa solo la API PUBLICA de Binance (no requiere credenciales).
