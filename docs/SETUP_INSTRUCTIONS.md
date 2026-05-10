@@ -1,51 +1,49 @@
 # Instrucciones de Setup - bot3 Multi-Strategy
 
-## Estado actual (2026-05-08)
+## Estado actual (2026-05-09)
 
-El proyecto esta completamente operativo:
-- bot3 corre en `localhost:8001`
-- bot1 corre en `localhost:8000`
+Sistema completamente operativo:
 - 3 estrategias independientes: `apuesta`, `qlearning`, `tanque`
-- Price Poller: detecta TP/SL automaticamente via Binance API
-- Primera orden real ejecutada (SPY, Alpaca live, 2026-05-06)
+- Price Poller: detecta TP/SL cada 60s via Binance API publica
+- Excel por estrategia: se llena automaticamente con WIN/LOSS
+- bot1 es opcional: el bot aprende con o sin el
 
 ---
 
 ## Requisitos
 
 - Python 3.10+
-- bot1 (Trading-bot) corriendo en `localhost:8000` con el endpoint `/webhook/bot3`
-- Archivo `.env` configurado (ver abajo)
-- Acceso a internet (para Price Poller -> Binance API publica)
+- Acceso a internet (Price Poller usa Binance API publica, sin key)
+- Archivo `.env` configurado
+- bot1 opcional (si quieres ejecutar en Alpaca)
 
 ---
 
 ## Arranque rapido
 
 ```bat
-REM Doble clic en la raiz del proyecto:
+REM Doble clic:
 start_bot3.bat
 ```
 
 El bat hace todo automaticamente:
 1. Verifica Python
-2. Instala/actualiza dependencias (`pip install -r requirements.txt`)
-3. Verifica conectividad con bot1
-4. Arranca uvicorn en puerto 8001
-5. Si cae, reinicia solo en 5 segundos (loop 24/7)
+2. Instala dependencias (`pip install -r requirements.txt`)
+3. Verifica bot1 (aviso si no esta, no bloquea)
+4. Abre ngrok en ventana separada
+5. Arranca uvicorn en puerto 8001
+6. Auto-restart si cae (loop 24/7)
 
 ---
 
 ## Configurar `.env`
 
-Copia `.env.example` a `.env` y edita estos valores:
-
 ```env
-# Conexion con bot1
+# Conexion con bot1 (opcional)
 BOT1_WEBHOOK_URL=http://127.0.0.1:8000/webhook/bot3
 BOT1_WEBHOOK_SECRET=a_secure_bot3_secret
 
-# Modo de ejecucion
+# Modo
 DRY_RUN=false
 PORT=8001
 
@@ -65,17 +63,13 @@ TELEGRAM_CHAT_ID=
 # 1. Health check
 Invoke-WebRequest http://localhost:8001/health | Select-Object -ExpandProperty Content
 
-# 2. Listar estrategias y su estado
+# 2. Listar estrategias
 Invoke-WebRequest http://localhost:8001/api/strategies | Select-Object -ExpandProperty Content
 
-# 3. Estado del agente qlearning
-Invoke-WebRequest http://localhost:8001/api/strategy/qlearning/status | Select-Object -ExpandProperty Content
-
-# 4. Test de senal manual para qlearning
+# 3. Test de senal manual (qlearning)
 $headers = @{ "Content-Type" = "application/json"; "X-Webhook-Secret" = "mi_secreto_webhook_123" }
 $body = @{
-    status = "pending"
-    source = "tradingview"
+    status = "pending"; source = "tradingview"
     signal = @{
         symbol = "SOLUSDT"; action = "buy"; confidence = 0.7; size = 0.1
         params = @{
@@ -85,17 +79,14 @@ $body = @{
         }
     }
 } | ConvertTo-Json -Depth 5
-Invoke-WebRequest -Uri http://localhost:8001/webhook/strategy/qlearning -Method POST -Headers $headers -Body $body
+
+Invoke-WebRequest -Uri http://localhost:8001/webhook/strategy/qlearning `
+    -Method POST -Headers $headers -Body $body
 ```
 
 Respuesta esperada:
 ```json
-{
-  "strategy_id": "qlearning",
-  "status":      "executed",
-  "ql_action":   "EXECUTE_FULL",
-  "state":       "trend_up|bullish|breakout|bull|extreme"
-}
+{"strategy": "qlearning", "status": "queued", "ql_action": "EXECUTE_FULL", ...}
 ```
 
 ---
@@ -104,19 +95,26 @@ Respuesta esperada:
 
 En cada alerta de Pine Script:
 
-- **URL:** `https://<tu-ngrok-id>.ngrok.io/webhook/strategy/qlearning`
-  (cambia `qlearning` por `apuesta` o `tanque` segun la estrategia)
+- **URL Apuesta:** `https://<ngrok>.ngrok-free.app/webhook/strategy/apuesta`
+- **URL QLearning:** `https://<ngrok>.ngrok-free.app/webhook/strategy/qlearning`
+- **URL Tanque:** `https://<ngrok>.ngrok-free.app/webhook/strategy/tanque`
 - **Header:** `X-Webhook-Secret: <TV_WEBHOOK_SECRET>`
-- **Body:** JSON con el formato documentado en `docs/webhook_format.md`
+- **Body:** JSON con el formato de `docs/webhook_format.md`
 
-Para que el aprendizaje sea automatico, el body debe incluir `sl` y `tp` en `params`.
+Para que el aprendizaje sea automatico, el body DEBE incluir `sl` y `tp` en `params`.
 
 ---
 
-## Ver el diario de aprendizaje
+## Ver resultados
 
 ```powershell
-# Archivo Markdown (siempre actualizado tras cada trade)
+# Excel de cada estrategia (llenado automaticamente con WIN/LOSS)
+# Abrir con doble clic:
+logs\qlearning\trade_log.xlsx
+logs\apuesta\trade_log.xlsx
+logs\tanque\trade_log.xlsx
+
+# Diario de aprendizaje (actualizado tras cada trade cerrado)
 Get-Content logs\qlearning\INSIGHTS.md
 
 # Via API
@@ -125,9 +123,44 @@ Invoke-WebRequest http://localhost:8001/api/strategy/qlearning/journal | Select-
 
 ---
 
-## Cambios que se hicieron en bot1
+## Aprendizaje manual (si quieres corregir resultados)
 
-Para que bot1 acepte senales de bot3, se aplicaron estos cambios:
+```powershell
+# Ver que se procesaria
+python scripts/learn_from_excel.py --dry-run
+
+# Procesar todas las estrategias
+python scripts/learn_from_excel.py
+
+# Solo una
+python scripts/learn_from_excel.py qlearning
+```
+
+El script lee las columnas `result` (WIN/LOSS) del Excel y dispara el aprendizaje
+para las filas que aun no tienen `learned_at`.
+
+---
+
+## Reiniciar y restaurar
+
+```powershell
+# Reiniciar bot3 (start_bot3.bat lo hace automaticamente)
+taskkill /f /im python.exe
+
+# Restaurar Q-Table desde backup
+Copy-Item "data\strategies\qlearning\backups\q_table_20260509_060000.json" `
+          "data\strategies\qlearning\q_table.json"
+
+# Resetear Q-Table de una estrategia
+'{}' | Out-File data\strategies\qlearning\q_table.json -Encoding utf8
+
+# Borrar Excel para empezar de cero (bot lo recrea automaticamente)
+Remove-Item logs\qlearning\trade_log.xlsx
+```
+
+---
+
+## Cambios necesarios en bot1 (si lo usas)
 
 **`.env` de bot1:**
 ```env
@@ -137,50 +170,6 @@ BOT3_ALLOWED_HOSTS=127.0.0.1,::1,localhost
 ```
 
 **`core/bot_registry.py` de bot1:**
-- `"bot3_qlearning"` agregado a `KNOWN_BOTS`
+- Agregar `"bot3_qlearning"` a `KNOWN_BOTS`
 
-Ver `docs/integration_bot1.md` para los detalles completos.
-
----
-
-## Tests
-
-```powershell
-python -X utf8 -m pytest tests/ -v
-```
-
----
-
-## Estructura de datos en disco
-
-Tras el primer uso, el sistema crea automaticamente:
-
-```
-data/strategies/
-  apuesta/   qlearning/   tanque/    (q_table.json, stats, replay, backups)
-
-state/
-  apuesta/   qlearning/   tanque/    (decision_log.jsonl)
-
-logs/
-  apuesta/   qlearning/   tanque/    (INSIGHTS.md, learning_journal.jsonl, trade_log.xlsx, events/)
-```
-
-No es necesario crear estos directorios manualmente.
-
----
-
-## Reiniciar y restaurar
-
-```powershell
-# Reiniciar bot3
-taskkill /f /im python.exe
-start_bot3.bat
-
-# Restaurar Q-Table desde backup
-Copy-Item "data\strategies\qlearning\backups\q_table_20260508_060000.json" `
-          "data\strategies\qlearning\q_table.json"
-
-# Resetear Q-Table de una estrategia
-'{}' | Out-File data\strategies\qlearning\q_table.json -Encoding utf8
-```
+Ver `docs/integration_bot1.md` para los detalles.

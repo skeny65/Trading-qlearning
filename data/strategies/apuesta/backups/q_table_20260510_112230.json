@@ -1,0 +1,14 @@
+{
+  "mid|excellent|eu_hours": {
+    "EXECUTE_FULL": 0.09357193127117144,
+    "EXECUTE_HALF": -0.0348908178521043,
+    "SKIP": 0.0,
+    "INVERT": 0.0
+  },
+  "mid|excellent|asia_hours": {
+    "EXECUTE_FULL": -0.020500573263571936,
+    "EXECUTE_HALF": 0.14769391812816463,
+    "SKIP": 0.0,
+    "INVERT": 0.0
+  }
+}

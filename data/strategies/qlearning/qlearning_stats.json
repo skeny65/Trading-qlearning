@@ -1,8 +1,8 @@
 {
-  "alpha": 0.0999,
-  "epsilon": 0.1998,
+  "alpha": 0.09464591026050267,
+  "epsilon": 0.18929182052100535,
   "gamma": 0.9,
   "paused": false,
   "baseline_wr": null,
-  "last_updated": "2026-05-09T08:03:35.059630"
+  "last_updated": "2026-05-10T18:21:59.059131"
 }

@@ -94,5 +94,80 @@
         "momentum": "bearish"
       }
     }
+  },
+  {
+    "timestamp": "2026-05-09T08:57:59.939150+00:00",
+    "status": "pending",
+    "signal": {
+      "strategy_id": "bot3_tanque",
+      "symbol": "SOLUSDT",
+      "action": "sell",
+      "confidence": 0.736,
+      "size": 0.05,
+      "params": {
+        "source": "bot3_qlearning_agent",
+        "ql_action": "EXECUTE_FULL",
+        "ql_state": "moderate|mid|pullback",
+        "q_value": 0.0,
+        "price": 93.72,
+        "sl": 94.7072,
+        "tp": 90.7584,
+        "atr": 0.03938,
+        "regime": "range",
+        "volatility": "low",
+        "momentum": "bearish",
+        "source_strategy": "tanque"
+      }
+    }
+  },
+  {
+    "timestamp": "2026-05-09T09:02:00.285844+00:00",
+    "status": "pending",
+    "signal": {
+      "strategy_id": "bot3_qlearning",
+      "symbol": "SOLUSDT",
+      "action": "sell",
+      "confidence": 0.7,
+      "size": 0.1,
+      "params": {
+        "source": "bot3_qlearning_agent",
+        "ql_action": "EXECUTE_FULL",
+        "ql_state": "range|bearish|breakout|bull|weak",
+        "q_value": 0.0,
+        "price": 93.67,
+        "sl": 93.7243931428,
+        "tp": 93.5612137143,
+        "atr": 0.0362620952,
+        "regime": "range",
+        "volatility": "low",
+        "momentum": "bearish",
+        "source_strategy": "qlearning"
+      }
+    }
+  },
+  {
+    "timestamp": "2026-05-09T11:25:59.941478+00:00",
+    "status": "pending",
+    "signal": {
+      "strategy_id": "bot3_qlearning",
+      "symbol": "SOLUSDT",
+      "action": "buy",
+      "confidence": 0.7,
+      "size": 0.1,
+      "params": {
+        "source": "bot3_qlearning_agent",
+        "ql_action": "EXECUTE_FULL",
+        "ql_state": "trend_up|bullish|breakout|bull|strong",
+        "q_value": 0.0,
+        "price": 93.68,
+        "sl": 93.6200670699,
+        "tp": 93.7998658601,
+        "atr": 0.0399552867,
+        "regime": "trend_up",
+        "volatility": "low",
+        "momentum": "bullish",
+        "source_strategy": "qlearning"
+      }
+    }
   }
 ]

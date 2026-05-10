@@ -1,78 +1,107 @@
 # Bot3 - Q-Learning Trading Bot (Multi-Strategy)
 
-## Estado: OPERATIVO (2026-05-06)
+## Estado: OPERATIVO (2026-05-09)
 
-Primera orden real ejecutada en Alpaca Live:
-- Senal: SPY BUY desde TradingView
-- `order_id: 759b9684-528d-47cc-b54a-98aa68003a5a`
+Trading bot que recibe alertas de **TradingView** y usa agentes **Q-Learning independientes**
+por estrategia para decidir autonomamente si ejecutar, reducir, ignorar o invertir cada senal.
 
-Trading bot que recibe alertas de **TradingView** (PineScript) y usa agentes
-**Q-Learning independientes** por estrategia para decidir autonomamente si ejecutar,
-reducir, ignorar o invertir cada senal. Las ordenes se ejecutan via **bot1** (Trading-bot).
-
-Cada estrategia es completamente independiente: Q-table propia, logs propios, diario de
-aprendizaje propio. El sistema aprende solo gracias al **Price Poller** (Binance API).
+El sistema aprende solo: el **Price Poller** (Binance API) detecta cuando cada posicion toca
+TP o SL, actualiza la Q-table automaticamente, y llena el Excel con WIN/LOSS sin intervencion humana.
 
 ## Arquitectura
 
 ```
 TradingView (.pine)
     |
-    |  POST /webhook/strategy/{id}  (X-Webhook-Secret)
+    |  POST /webhook/strategy/{id}
     v
 bot3 (localhost:8001)
     |
     +-- StrategyRegistry
-    |     |-- ApuestaWorker   -> data/strategies/apuesta/
-    |     |-- QLearningWorker -> data/strategies/qlearning/
-    |     +-- TanqueWorker    -> data/strategies/tanque/
+    |     |-- ApuestaWorker   (state 3D: 27 estados)
+    |     |-- QLearningWorker (state 5D: 243 estados)
+    |     +-- TanqueWorker    (state 3D: 27 estados)
     |
-    |  (decision Q-Learning por estrategia)
+    |-- Excel por estrategia: logs/{id}/trade_log.xlsx
     |
-    |  POST /webhook/bot3  (BOT1_WEBHOOK_SECRET)
+    |  POST /webhook/bot3  (opcional, si bot1 esta corriendo)
     v
 bot1 (localhost:8000)  -- Ejecuta en Alpaca
-    |
-    v
-Alpaca API (Live / Paper)
 
-PricePoller (hilo independiente, Binance API publica)
-    |-- GET https://api.binance.com/api/v3/ticker/price?symbol=SOLUSDT
-    |-- Detecta TP/SL cada 30s
-    +-- Llama worker.update_q() automaticamente -> cierra el ciclo de aprendizaje
+PricePoller (hilo independiente, cada 60s)
+    |-- GET https://api.binance.com/api/v3/ticker/price
+    |-- Detecta TP/SL
+    |-- Actualiza Q-table automaticamente
+    +-- Llena Excel: result=WIN/LOSS, pnl_notes, learned_at
 ```
 
-## Estrategias disponibles
+## Estrategias
 
-| ID         | Estado  | Descripcion                                         |
-|------------|---------|-----------------------------------------------------|
-| qlearning  | Activa  | Estado 5D: 243 combinaciones de mercado             |
-| apuesta    | Activa  | Estado 3D: zone de precio, R:R, hora del dia        |
-| tanque     | Activa  | Estado 3D: fuerza de entrada, zona de vela, patron  |
+| ID         | Estado  | State space        | Descripcion                          |
+|------------|---------|--------------------|--------------------------------------|
+| qlearning  | Activa  | 5D - 243 estados   | regime, momentum, setup, htf, trend  |
+| apuesta    | Activa  | 3D - 27 estados    | price_zone, rr_level, hour_zone      |
+| tanque     | Activa  | 3D - 27 estados    | entry_strength, bar_zone, pattern    |
 
 ## Arranque rapido
 
 ```bat
-REM Doble clic en la raiz del proyecto:
 start_bot3.bat
 ```
 
-El bat hace todo automaticamente:
-1. Verifica Python
-2. Instala/actualiza dependencias (`pip install -r requirements.txt`)
-3. Verifica conectividad con bot1 en localhost:8000
-4. Arranca uvicorn en puerto 8001
-5. Si cae, reinicia solo en 5 segundos (loop 24/7)
+Hace todo: verifica Python, instala deps, abre ngrok, arranca uvicorn con auto-restart 24/7.
 
-## Configuracion inicial
+## Excel automatico
 
-```bat
-REM Copiar ejemplo de configuracion
-copy .env.example .env
-REM Editar .env con tus valores
+Cada estrategia tiene su propio Excel en `logs/{id}/trade_log.xlsx`.
+El bot escribe una fila por cada alerta. El Price Poller llena automaticamente:
+
+| Columna    | Quien la llena | Contenido ejemplo                           |
+|------------|----------------|---------------------------------------------|
+| result     | Price Poller   | `WIN` o `LOSS`                              |
+| pnl_notes  | Price Poller   | `+1.45% \| TP_HIT \| 47min \| R=2.34x`     |
+| learned_at | Price Poller   | `2026-05-09T15:10:00Z`                      |
+
+Para forzar aprendizaje desde Excel (si quieres corregir algun resultado):
+```powershell
+python scripts/learn_from_excel.py
 ```
 
-Variables minimas a configurar:
+## Endpoints principales
+
+| Metodo | Endpoint                          | Descripcion                              |
+|--------|-----------------------------------|------------------------------------------|
+| GET    | /health                           | Estado completo (strategies, poller)     |
+| POST   | /webhook/strategy/{id}            | Recibir alertas de TradingView           |
+| GET    | /api/strategies                   | Listar todas las estrategias             |
+| GET    | /api/strategy/{id}/status         | Estado del agente                        |
+| POST   | /api/strategy/{id}/pause          | Pausar agente                            |
+| POST   | /api/strategy/{id}/resume         | Reanudar agente                          |
+| POST   | /api/strategy/{id}/update         | Aprendizaje manual                       |
+| GET    | /api/strategy/{id}/journal        | Resumen del diario de aprendizaje        |
+| GET    | /api/strategy/{id}/journal/report | Ver INSIGHTS.md                          |
+| GET    | /pending                          | Posiciones monitoreadas por Price Poller |
+
+## Verificar que funciona
+
+```powershell
+# Health check
+Invoke-WebRequest http://localhost:8001/health | Select-Object -ExpandProperty Content
+
+# Estado de todas las estrategias
+Invoke-WebRequest http://localhost:8001/api/strategies | Select-Object -ExpandProperty Content
+
+# Diario de aprendizaje
+Invoke-WebRequest http://localhost:8001/api/strategy/qlearning/journal | Select-Object -ExpandProperty Content
+
+# Ver Excel actualizado
+# Abrir: logs\qlearning\trade_log.xlsx
+
+# Ver INSIGHTS.md
+Get-Content logs\qlearning\INSIGHTS.md
+```
+
+## Configuracion minima (.env)
 
 ```env
 BOT1_WEBHOOK_URL=http://127.0.0.1:8000/webhook/bot3
@@ -82,198 +111,54 @@ DRY_RUN=false
 PORT=8001
 ```
 
-## Verificar que funciona
-
-```powershell
-# Health check
-Invoke-WebRequest http://localhost:8001/health | Select-Object -ExpandProperty Content
-
-# Listar todas las estrategias
-Invoke-WebRequest http://localhost:8001/api/strategies | Select-Object -ExpandProperty Content
-
-# Estado de una estrategia
-Invoke-WebRequest http://localhost:8001/api/strategy/qlearning/status | Select-Object -ExpandProperty Content
-
-# Enviar senal de prueba a la estrategia qlearning
-$headers = @{ "Content-Type" = "application/json"; "X-Webhook-Secret" = "mi_secreto_webhook_123" }
-$body = Get-Content tests\fixtures\tv_envelope_buy.json -Raw -Encoding UTF8
-Invoke-WebRequest -Uri http://localhost:8001/webhook/strategy/qlearning -Method POST -Headers $headers -Body $body
-```
-
-## Endpoints principales
-
-| Metodo | Endpoint                                | Descripcion                                    |
-|--------|-----------------------------------------|------------------------------------------------|
-| GET    | /                                       | Health check rapido                            |
-| GET    | /health                                 | Estado detallado (strategies, poller, pending) |
-| POST   | /webhook/strategy/{id}                  | Recibir alertas de TradingView por estrategia  |
-| GET    | /api/strategies                         | Listar todas las estrategias                   |
-| GET    | /api/strategy/{id}/status               | Estado del agente de una estrategia            |
-| POST   | /api/strategy/{id}/pause                | Pausar estrategia manualmente                  |
-| POST   | /api/strategy/{id}/resume               | Reanudar estrategia manualmente                |
-| POST   | /api/strategy/{id}/update               | Aprendizaje manual (si no usa Price Poller)    |
-| GET    | /api/strategy/{id}/journal              | Resumen del diario de aprendizaje              |
-| GET    | /api/strategy/{id}/journal/recent       | Ultimas entradas del journal                   |
-| GET    | /api/strategy/{id}/journal/report       | Regenerar INSIGHTS.md                         |
-| GET    | /pending                                | Decisiones pendientes de cierre                |
-
-## Ciclo de aprendizaje automatico (Price Poller)
-
-El bot aprende solo. Cuando TradingView manda una alerta con `sl` y `tp`:
-
-1. Bot3 ejecuta la orden y guarda en `pending_q_decisions` con `entry_price`, `sl`, `tp`
-2. El Price Poller (hilo en segundo plano) consulta Binance cada 30 segundos
-3. Cuando el precio toca `tp` o `sl`, llama automaticamente a `worker.update_q()`
-4. El agente actualiza la Q-table y regenera `INSIGHTS.md`
-
-No se necesita intervenci n manual. El ciclo cierra solo.
-
-## Diario de aprendizaje (INSIGHTS.md)
-
-Cada estrategia genera su propio archivo en `logs/{strategy_id}/INSIGHTS.md`:
-
-- Estados RENTABLES (Q > 0.30): donde el agente prefiere ejecutar
-- Estados BLOQUEADOS (Q < -0.30): donde el agente evita entrar automaticamente
-- Ultimas 15 conclusiones con etiquetas `[RENTABLE]` / `[BLOQUEADO]`
-- Sugerencias de mejora para Pine Script
-
-El archivo se sobreescribe despues de cada trade. Siempre esta al dia.
-
-## Tests
-
-```powershell
-python -X utf8 -m pytest tests/ -v
-```
-
-## Integracion con bot1
-
-Para que bot1 acepte senales de bot3, agregar en el `.env` de bot1:
-
-```env
-BOT3_WEBHOOK_SECRET=a_secure_bot3_secret
-BOT3_LOCAL_ONLY=true
-BOT3_ALLOWED_HOSTS=127.0.0.1,::1,localhost
-```
-
-Y registrar `"bot3_qlearning"` en `KNOWN_BOTS` de `core/bot_registry.py`.
-
-Ver `docs/integration_bot1.md` para los detalles completos.
-
 ## Estructura del proyecto
 
 ```
-bot3.py                               FastAPI entrypoint + todos los endpoints
-config.py                             Variables de entorno y configuracion
+bot3.py                               FastAPI entrypoint
+config.py                             Variables de entorno
 start_bot3.bat                        Launcher 24/7 con auto-restart
 requirements.txt
-.env                                  Configuracion local (gitignored)
-.env.example                          Plantilla de configuracion
+.env / .env.example
 
 core/
-  qlearning_agent.py                 Q-Table, epsilon-greedy, Bellman update
-  strategy_worker.py                 Clase base abstracta para todas las estrategias
-  strategy_registry.py               Singleton: carga e inicializa todos los workers
-  state_encoder.py                   (legacy) encoder para el endpoint /webhook/tv
-  reward_calculator.py               formula de recompensa post-trade
-  tv_signal_parser.py                parser y validador del envelope TradingView
+  qlearning_agent.py                 Q-Table, epsilon-greedy, Bellman
+  strategy_worker.py                 Clase base abstracta
+  strategy_registry.py               Singleton con todos los workers
+  reward_calculator.py               Formula de recompensa
+  tv_signal_parser.py                Parser del envelope TradingView
 
 strategies/
-  apuesta/
-    worker.py                        Estrategia Apuesta: state price_zone|rr_level|hour_zone
-  qlearning/
-    worker.py                        Estrategia QLearning: state 5D (243 estados)
-  tanque/
-    worker.py                        Estrategia Tanque: state entry_strength|bar_zone|pattern
-  pinescript/
-    ema_atr_regime_v1.pine           estrategia PineScript para TradingView
+  apuesta/worker.py                  Estrategia Apuesta (3D)
+  qlearning/worker.py                Estrategia QLearning (5D)
+  tanque/worker.py                   Estrategia Tanque (3D)
 
 manager/
-  qlearning_trainer.py               replay buffer, offline training, backups
-  price_poller.py                    hilo independiente: Binance -> deteccion TP/SL
-  learning_journal.py                diario de aprendizaje por estrategia
-
-sender/
-  webhook_client.py                  POST a bot1 con retry backoff
-  signal_formatter.py                construye el payload para bot1
-  telegram_notifier.py               notificaciones Telegram
+  qlearning_trainer.py               Replay buffer, backups
+  price_poller.py                    Monitor Binance cada 60s -> Excel automatico
+  learning_journal.py                Diario de aprendizaje -> INSIGHTS.md
 
 utils/
-  logger.py                          logger centralizado
-  excel_logger.py                    exportacion a Excel (por estrategia)
+  excel_logger.py                    Excel por estrategia (write + update result)
 
-data/
-  strategies/
-    apuesta/
-      q_table.json                   Q-Table de la estrategia apuesta
-      qlearning_stats.json           alpha, epsilon actuales
-      replay_buffer.jsonl            historial de experiencias
-      backups/                       snapshots automaticos
-    qlearning/
-      q_table.json
-      qlearning_stats.json
-      replay_buffer.jsonl
-      backups/
-    tanque/
-      q_table.json
-      qlearning_stats.json
-      replay_buffer.jsonl
-      backups/
+sender/
+  webhook_client.py                  POST a bot1 con retry
+  signal_formatter.py                Payload para bot1
+  telegram_notifier.py               Notificaciones Telegram
 
-state/
-  apuesta/
-    decision_log.jsonl               historial de decisiones de la estrategia apuesta
-  qlearning/
-    decision_log.jsonl
-  tanque/
-    decision_log.jsonl
-  pending_signals.json               senales en cola para retry
+scripts/
+  learn_from_excel.py                Leer WIN/LOSS del Excel -> aprendizaje manual
 
-logs/
-  apuesta/
-    INSIGHTS.md                      diario de aprendizaje (actualizado tras cada trade)
-    learning_journal.jsonl           registro maquina de Q-updates
-    trade_log.xlsx                   Excel acumulado
-    events/                          reportes JSON por evento
-  qlearning/
-    INSIGHTS.md
-    learning_journal.jsonl
-    trade_log.xlsx
-    events/
-  tanque/
-    INSIGHTS.md
-    learning_journal.jsonl
-    trade_log.xlsx
-    events/
+data/strategies/{id}/                Q-table, stats, replay, backups (por estrategia)
+state/{id}/decision_log.jsonl        Historial de decisiones (por estrategia)
+logs/{id}/
+  trade_log.xlsx                     Excel con resultados automaticos
+  INSIGHTS.md                        Resumen de aprendizaje
+  learning_journal.jsonl             Registro detallado por Q-update
+  events/                            Reporte JSON por evento
 
-tests/
-  test_qlearning_agent.py
-  fixtures/
-    tv_envelope_buy.json
-
-docs/
-  architecture.md
-  qlearning_strategy.md
-  api_reference.md
-  webhook_format.md
-  data_schemas.md
-  environment_variables.md
-  end_to_end_flow.md
-  integration_bot1.md
-  SETUP_INSTRUCTIONS.md
+docs/                                Documentacion completa
+tests/                               Tests unitarios
 ```
-
-## Variables de entorno importantes
-
-| Variable              | Descripcion                            | Default |
-|-----------------------|----------------------------------------|---------|
-| BOT1_WEBHOOK_URL      | URL del endpoint bot3 en bot1          | -       |
-| BOT1_WEBHOOK_SECRET   | Secreto compartido con bot1            | -       |
-| TV_WEBHOOK_SECRET     | Secreto para alertas TradingView       | -       |
-| QLEARNING_ENABLED     | Activar agente Q-Learning              | true    |
-| DRY_RUN               | No enviar ordenes reales a bot1        | false   |
-| PORT                  | Puerto del servidor                    | 8001    |
-
-Ver `docs/environment_variables.md` para la lista completa.
 
 ## Documentacion
 

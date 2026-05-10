@@ -1,0 +1,8 @@
+{
+  "moderate|mid|pullback": {
+    "EXECUTE_FULL": 0.20484838508072992,
+    "EXECUTE_HALF": -0.11023605360000001,
+    "SKIP": 0.0,
+    "INVERT": -0.2634681839053179
+  }
+}

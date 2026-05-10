@@ -5,31 +5,84 @@
 ```
 data/
   strategies/
-    {strategy_id}/            (apuesta | qlearning | tanque)
+    {id}/            (apuesta | qlearning | tanque)
       q_table.json
       qlearning_stats.json
       replay_buffer.jsonl
       backups/
 
 state/
-  {strategy_id}/
+  {id}/
     decision_log.jsonl
   pending_signals.json
 
 logs/
-  {strategy_id}/
+  {id}/
+    trade_log.xlsx        <- llenado automaticamente por Price Poller
     INSIGHTS.md
     learning_journal.jsonl
-    trade_log.xlsx
     events/
       YYYY-MM-DD_HH-MM-SS.json
 ```
 
 ---
 
+## `logs/{id}/trade_log.xlsx`
+
+Una fila por senal recibida de TradingView. El bot llena todas las columnas
+automaticamente. Las columnas `result`, `pnl_notes` y `learned_at` las llena
+el Price Poller cuando detecta TP o SL.
+
+### Columnas que llena el bot al recibir la senal
+
+| Columna        | Tipo    | Descripcion                                               |
+|----------------|---------|-----------------------------------------------------------|
+| timestamp_utc  | str     | Fecha y hora de la senal (ISO 8601 UTC)                   |
+| event_id       | str     | ID unico del evento generado por bot3                     |
+| strategy_id    | str     | apuesta / qlearning / tanque                              |
+| mode           | str     | LIVE o DRY_RUN                                            |
+| symbol         | str     | Par de trading (SOLUSDT, BTCUSDT, etc.)                   |
+| tv_action      | str     | Accion de TradingView: buy / sell                         |
+| ql_action      | str     | Decision Q-Learning: EXECUTE_FULL / HALF / SKIP / INVERT  |
+| ql_state       | str     | Estado codificado (ej: "trend_up\|bullish\|breakout\|...")  |
+| q_value        | float   | Valor Q del estado-accion elegido                         |
+| regime         | str     | Regimen de mercado (si viene en params)                   |
+| volatility     | str     | Volatilidad (si viene en params)                          |
+| momentum       | str     | Momentum (si viene en params)                             |
+| price          | float   | Precio de entrada                                         |
+| sl             | float   | Stop Loss                                                 |
+| tp             | float   | Take Profit                                               |
+| atr            | float   | ATR en el momento de la senal                             |
+| execute        | bool    | True si el bot decidio ejecutar (no SKIP)                 |
+| final_action   | str     | Accion final: buy / sell / none                           |
+| size           | float   | Tamano de la posicion enviada a bot1                      |
+| confidence     | float   | Confianza de la senal TradingView (0-1)                   |
+| webhook_status | str     | executed / dry_run / failed / skipped                     |
+| order_id       | str     | UUID de bot1 o event_id si bot1 estaba caido              |
+| reason         | str     | Descripcion de la decision Q-Learning                     |
+| epsilon        | float   | Epsilon del agente al momento de decidir                  |
+| alpha          | float   | Alpha del agente al momento de decidir                    |
+
+### Columnas llenadas automaticamente por el Price Poller
+
+| Columna     | Tipo | Descripcion                                                      |
+|-------------|------|------------------------------------------------------------------|
+| result      | str  | **WIN** o **LOSS** (llenado cuando Binance detecta TP o SL)     |
+| pnl_notes   | str  | "+1.45% \| TP_HIT \| 47min \| R=2.34x" (detalle del cierre)    |
+| learned_at  | str  | Timestamp UTC de cuando el agente proceso el resultado           |
+
+**Nota:** Si el Excel esta abierto cuando el Price Poller intenta escribir,
+muestra un warning y reintenta en el siguiente ciclo (60s). Cierra el Excel
+para ver los resultados en tiempo real.
+
+**Nota:** Si marcas manualmente WIN/LOSS antes de que llegue el Price Poller,
+el bot NO sobreescribe tu decision (respeta el valor existente en `result`).
+
+---
+
 ## `data/strategies/{id}/q_table.json`
 
-Q-table persistida en disco. Formato:
+Q-table persistida. Se actualiza automaticamente tras cada cierre de posicion.
 
 ```json
 {
@@ -48,24 +101,21 @@ Q-table persistida en disco. Formato:
 }
 ```
 
-- **Clave outer:** estado codificado (formato depende de la estrategia)
-- **Clave inner:** una de `EXECUTE_FULL | EXECUTE_HALF | SKIP | INVERT`
-- **Valor:** Q-value (float, puede ser negativo)
-- Se inicializa en `0.0` de forma lazy cuando se visita el estado por primera vez
-
 **Formatos de estado por estrategia:**
 
-| Estrategia | Formato                                         | Estados posibles |
-|------------|-------------------------------------------------|------------------|
-| qlearning  | `regime\|momentum\|setup_type\|htf_bias\|trend` | 243              |
-| apuesta    | `price_zone\|rr_level\|hour_zone`               | 36               |
-| tanque     | `entry_strength\|bar_zone\|pattern`             | 27               |
+| Estrategia | Formato de estado                                | Estados |
+|------------|--------------------------------------------------|---------|
+| qlearning  | `regime\|momentum\|setup_type\|htf_bias\|strength` | 243   |
+| apuesta    | `price_zone\|rr_level\|hour_zone`                | 27      |
+| tanque     | `entry_strength\|bar_zone\|pattern`              | 27      |
+
+**Clasificacion automatica de estados:**
+- Q > +0.30 -> RENTABLE (el agente prefiere ejecutar aqui)
+- Q < -0.30 -> BLOQUEADO (el agente evita ejecutar aqui)
 
 ---
 
 ## `data/strategies/{id}/qlearning_stats.json`
-
-Hiperparametros actuales del agente:
 
 ```json
 {
@@ -74,7 +124,7 @@ Hiperparametros actuales del agente:
   "gamma":        0.90,
   "paused":       false,
   "baseline_wr":  0.55,
-  "last_updated": "2026-05-08T14:23:00"
+  "last_updated": "2026-05-09T14:23:00"
 }
 ```
 
@@ -82,163 +132,42 @@ Hiperparametros actuales del agente:
 
 ## `data/strategies/{id}/replay_buffer.jsonl`
 
-Una experiencia por linea (JSONL). Se llena automaticamente tras cada Q-update:
+Una experiencia por linea. Se llena automaticamente por el Price Poller.
 
 ```json
-{"ts":"2026-05-08T14:23:00","s":"trend_up|bullish|breakout|bull|extreme","a":"EXECUTE_FULL","r":0.40,"s_next":"trend_up|bullish|breakout|bull|extreme","done":false}
-{"ts":"2026-05-08T15:10:00","s":"range|bearish|pullback|bear|weak","a":"EXECUTE_FULL","r":-0.40,"s_next":"range|bearish|pullback|bear|weak","done":true}
-```
-
-| Campo  | Tipo    | Descripcion                                                     |
-|--------|---------|-----------------------------------------------------------------|
-| ts     | str     | timestamp UTC del cierre de la posicion                         |
-| s      | str     | estado al entrar en la operacion                                |
-| a      | str     | accion tomada por el agente                                     |
-| r      | float   | recompensa (calculada por Price Poller o compute_reward())      |
-| s_next | str     | estado al cerrar (mismo estado si no hay info real)             |
-| done   | bool    | true si el episodio no tuvo s_next real                         |
-
----
-
-## `data/strategies/{id}/backups/`
-
-Backups automaticos de la Q-Table (cada vez que se guarda, max 28):
-
-```
-q_table_20260508_060000.json
-q_table_20260508_120000.json
-...
-```
-
-Formato identico a `q_table.json`. Se mantienen los ultimos 28 archivos.
-
----
-
-## `state/{id}/decision_log.jsonl`
-
-Historial de todas las decisiones tomadas por bot3 para la estrategia:
-
-```json
-{
-  "event_id":       "uuid",
-  "strategy_id":    "qlearning",
-  "timestamp_utc":  "2026-05-08T14:23:00.000000+00:00",
-  "symbol":         "SOLUSDT",
-  "tv_action":      "buy",
-  "ql_action":      "EXECUTE_FULL",
-  "ql_state":       "trend_up|bullish|breakout|bull|extreme",
-  "q_value":        0.3842,
-  "execute":        true,
-  "final_action":   "buy",
-  "size":           0.1,
-  "order_id":       "759b9684-528d-47cc-b54a-98aa68003a5a",
-  "dry_run":        false,
-  "reason":         "[qlearning] Q-Learning: execute full"
-}
-```
-
----
-
-## `state/pending_signals.json`
-
-Senales que no pudieron enviarse a bot1 (fallo de red). Se reintentan al reiniciar bot3:
-
-```json
-[
-  {
-    "payload":   {"timestamp": "...", "status": "pending", "signal": {...}},
-    "timestamp": "2026-05-08T14:23:00Z",
-    "attempts":  2
-  }
-]
+{"ts":"2026-05-09T14:23:00","s":"trend_up|bullish|breakout|bull|extreme","a":"EXECUTE_FULL","r":0.40,"s_next":"trend_up|bullish|breakout|bull|extreme","done":false}
+{"ts":"2026-05-09T15:10:00","s":"range|bearish|pullback|bear|weak","a":"EXECUTE_FULL","r":-0.55,"s_next":"range|bearish|pullback|bear|weak","done":true}
 ```
 
 ---
 
 ## `logs/{id}/learning_journal.jsonl`
 
-Una linea JSON por cada Q-update (cada vez que cierra una posicion):
+Una linea JSON por cada Q-update:
 
 ```json
 {
-  "ts":           "2026-05-08T14:23:00.000000+00:00",
-  "strategy_id":  "qlearning",
-  "state":        "trend_up|bullish|breakout|bull|extreme",
-  "action":       "EXECUTE_FULL",
-  "reward":       0.4000,
-  "old_q":        0.0000,
-  "new_q":        0.0400,
-  "delta_q":      0.0400,
-  "blocked":      false,
-  "good":         false,
-  "conclusion":   "Q sube de 0.000 a 0.040 tras trade ganador (reward=+0.400). aprendiendo: datos insuficientes aun.",
-  "trade_meta":   {
-    "epsilon":    0.1980,
-    "alpha":      0.0990,
-    "symbol":     "SOLUSDT",
-    "close_type": "TP_HIT"
-  }
+  "ts":          "2026-05-09T15:10:00.000000+00:00",
+  "strategy_id": "qlearning",
+  "state":       "trend_up|bullish|breakout|bull|extreme",
+  "action":      "EXECUTE_FULL",
+  "reward":      0.4000,
+  "old_q":       0.0000,
+  "new_q":       0.0400,
+  "delta_q":     0.0400,
+  "blocked":     false,
+  "good":        false,
+  "conclusion":  "Q sube de 0.000 a 0.040 tras trade ganador (reward=+0.400). aprendiendo.",
+  "trade_meta":  {"epsilon": 0.198, "alpha": 0.099, "close_type": "TP_HIT"}
 }
 ```
-
-| Campo      | Tipo   | Descripcion                                       |
-|------------|--------|---------------------------------------------------|
-| ts         | str    | timestamp UTC del Q-update                        |
-| state      | str    | estado al entrar en el trade                      |
-| action     | str    | accion tomada                                     |
-| reward     | float  | recompensa recibida                               |
-| old_q      | float  | Q-value antes del update                          |
-| new_q      | float  | Q-value despues del update                        |
-| delta_q    | float  | cambio en el Q-value                              |
-| blocked    | bool   | true si new_q < -0.30                             |
-| good       | bool   | true si new_q > +0.30                             |
-| conclusion | str    | texto legible generado automaticamente            |
-| trade_meta | dict   | contexto extra: epsilon, alpha, symbol, close_type|
 
 ---
 
 ## `logs/{id}/INSIGHTS.md`
 
-Archivo Markdown unico por estrategia, sobreescrito despues de cada Q-update.
-
-Contiene:
-1. Tabla de estados RENTABLES (Q > 0.30) con sugerencias de Pine Script
-2. Tabla de estados BLOQUEADOS (Q < -0.30) con filtros sugeridos
-3. Estadisticas del agente (epsilon, alpha, win rate historico)
-4. Ultimas 15 conclusiones con tags `[RENTABLE]` / `[BLOQUEADO]`
-5. Guia de uso del archivo
-
----
-
-## `logs/{id}/events/YYYY-MM-DD_HH-MM-SS.json`
-
-Reporte completo por evento (una alerta de TradingView):
-
-```json
-{
-  "event_id":       "uuid",
-  "timestamp_utc":  "2026-05-08T14:23:00Z",
-  "strategy_id":    "qlearning",
-  "mode":           "live",
-  "symbol":         "SOLUSDT",
-  "tv_action":      "buy",
-  "ql_action":      "EXECUTE_FULL",
-  "ql_state":       "trend_up|bullish|breakout|bull|extreme",
-  "q_value":        0.3842,
-  "execute":        true,
-  "final_action":   "buy",
-  "size":           0.1,
-  "confidence":     0.7,
-  "webhook_status": "executed",
-  "order_id":       "759b9684-528d-47cc-b54a-98aa68003a5a",
-  "reason":         "[qlearning] Q-Learning: execute full",
-  "epsilon":        0.198,
-  "alpha":          0.099,
-  "params": {
-    "price": 93.73, "sl": 93.63, "tp": 93.93,
-    "regime": "trend_up", "momentum": "bullish",
-    "setup_type": "breakout", "htf_bias": "bull",
-    "trend_strength": "extreme"
-  }
-}
-```
+Archivo Markdown por estrategia, sobreescrito tras cada Q-update. Contiene:
+1. Estados RENTABLES con sugerencias para Pine Script
+2. Estados BLOQUEADOS con filtros sugeridos
+3. Estadisticas del agente (epsilon, alpha, win rate)
+4. Ultimas 15 conclusiones

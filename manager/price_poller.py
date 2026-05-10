@@ -30,11 +30,12 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from core.reward_calculator import compute_reward
+from utils.excel_logger     import update_excel_result
 
 logger = logging.getLogger("bot3.price_poller")
 
 BINANCE_PRICE_URL     = "https://api.binance.com/api/v3/ticker/price"
-POLL_INTERVAL_SEC     = 30      # revisar posiciones cada 30 segundos
+POLL_INTERVAL_SEC     = 60      # revisar posiciones cada 60 segundos
 MAX_TRADE_DURATION_H  = 24      # cerrar forzado si lleva mas de 24h abierto
 PRICE_FETCH_TIMEOUT   = 5       # timeout de red en segundos
 
@@ -210,13 +211,25 @@ class PricePoller:
         # -- Remover de pendientes
         self._pending.pop(order_id, None)
 
-        resultado = "WIN" if pnl_pct > 0 else "LOSS"
+        resultado  = "WIN" if pnl_pct > 0 else ("LOSS" if pnl_pct < 0 else "LOSS")
+        pnl_notes  = f"{pnl_pct:+.2f}% | {reason} | {duration_min:.0f}min | R={r_multiple:.2f}x"
+
         logger.info(
             f"[{resultado}] [{strategy_id}|{order_id}] {reason}: "
             f"pnl={pnl_pct:+.2f}% R={r_multiple:.1f}x "
             f"reward={reward:.4f} new_q={new_q:.6f} "
             f"dur={duration_min:.0f}min"
         )
+
+        # -- Actualizar Excel automaticamente con el resultado
+        updated = update_excel_result(
+            order_id    = order_id,
+            result      = resultado,
+            strategy_id = strategy_id,
+            pnl_notes   = pnl_notes,
+        )
+        if not updated:
+            logger.debug(f"[{order_id}] Fila no encontrada en Excel (puede estar en otro ciclo)")
 
     # -------------------------------------------------------------------------
     # Helpers

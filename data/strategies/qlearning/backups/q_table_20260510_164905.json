@@ -1,0 +1,92 @@
+{
+  "trend_up|low|bullish": {
+    "EXECUTE_FULL": 0.0,
+    "EXECUTE_HALF": 0.0,
+    "SKIP": 0.0,
+    "INVERT": 0.0
+  },
+  "trend_up|mid|bullish": {
+    "EXECUTE_FULL": 0.4469263,
+    "EXECUTE_HALF": 0.0,
+    "SKIP": 0.0,
+    "INVERT": 0.0
+  },
+  "range|low|bullish": {
+    "EXECUTE_FULL": 0.0,
+    "EXECUTE_HALF": 0.0,
+    "SKIP": 0.0,
+    "INVERT": 0.0
+  },
+  "range|low|bearish": {
+    "EXECUTE_FULL": 0.0,
+    "EXECUTE_HALF": 0.0,
+    "SKIP": 0.0,
+    "INVERT": 0.0
+  },
+  "range|mid|bullish": {
+    "EXECUTE_FULL": 0.0,
+    "EXECUTE_HALF": 0.0,
+    "SKIP": 0.0,
+    "INVERT": 0.0
+  },
+  "range|bearish|breakout|bull|weak": {
+    "EXECUTE_FULL": 0.05769983496840998,
+    "EXECUTE_HALF": 0.0,
+    "SKIP": 0.0,
+    "INVERT": 0.0
+  },
+  "trend_up|bullish|trend|bull|strong": {
+    "EXECUTE_FULL": -0.0138687208965,
+    "EXECUTE_HALF": -0.02750641547294637,
+    "SKIP": 0.0,
+    "INVERT": -0.015329120138757073
+  },
+  "range|bullish|breakout|bull|strong": {
+    "EXECUTE_FULL": 0.012069823551887585,
+    "EXECUTE_HALF": 0.11025603117596346,
+    "SKIP": 0.0,
+    "INVERT": 0.0
+  },
+  "trend_up|bullish|breakout|bull|strong": {
+    "EXECUTE_FULL": 0.03886618148828301,
+    "EXECUTE_HALF": -0.02197126401367315,
+    "SKIP": 0.0,
+    "INVERT": 0.0
+  },
+  "range|bearish|breakout|bull|strong": {
+    "EXECUTE_FULL": -0.013719496245185928,
+    "EXECUTE_HALF": -0.013034816637430622,
+    "SKIP": 0.0,
+    "INVERT": 0.0
+  },
+  "trend_down|bearish|trend|bull|strong": {
+    "EXECUTE_FULL": -0.016684083543113015,
+    "EXECUTE_HALF": -0.011169263604886607,
+    "SKIP": 0.0,
+    "INVERT": -0.01616350080334565
+  },
+  "trend_down|bearish|breakout|bull|strong": {
+    "EXECUTE_FULL": -0.015607834299328043,
+    "EXECUTE_HALF": 0.08204473444111271,
+    "SKIP": 0.0,
+    "INVERT": -0.02077009920405541
+  },
+  "trend_up|bearish|breakout|bull|strong": {
+    "EXECUTE_FULL": -0.01206328107874225,
+    "EXECUTE_HALF": -0.011359169103778153,
+    "SKIP": 0.0,
+    "INVERT": -0.02800231164605173
+  },
+  "trend_down|bullish|breakout|bull|strong": {
+    "EXECUTE_FULL": -0.00907612314614295,
+    "EXECUTE_HALF": -0.01423867706924545,
+    "SKIP": 0.0,
+    "INVERT": 0.0
+  },
+  "trend_down|neutral|breakout|bull|strong": {
+    "EXECUTE_FULL": -0.01592879361142899,
+    "EXECUTE_HALF": 0.0,
+    "SKIP": 0.0,
+    "INVERT": 0.0
+  }
+}

@@ -512,6 +512,10 @@ class UpdateRequest(BaseModel):
     account_drawdown_pct: float = 0.0
     r_multiple:           float = 0.0
     next_state:           Optional[str] = None
+    # Campos opcionales para learn_from_excel.py:
+    # permiten actualizar sin necesitar order_id en pending_q_decisions
+    state:                Optional[str] = None
+    action:               Optional[str] = None
 
 
 @app.post("/qlearning/update")
@@ -639,24 +643,27 @@ def _send_strategy_to_bot1(
         logger.error(f"[{strategy_id}|{ticker}] Fallo de red: {error}")
         telegram_notifier.webhook_failed(ticker, error)
 
-    if webhook_status in ("dry_run", "executed"):
-        params = decision.get("params", {})
-        pending_q_decisions[order_id] = {
-            "state":         state,
-            "action":        ql_action,
-            "timestamp":     datetime.now(timezone.utc).isoformat(),
-            "ticker":        ticker,
-            "original_side": decision["original_action"],
-            "executed_side": side,
-            # campos para PricePoller
-            "strategy_id":   strategy_id,
-            "symbol":        ticker,
-            "side":          side,
-            "entry_price":   float(params.get("price", 0.0)),
-            "sl":            float(params.get("sl",    0.0)),
-            "tp":            float(params.get("tp",    0.0)),
-            "open_time":     datetime.now(timezone.utc).isoformat(),
-        }
+    # Rastrear en pending_q_decisions siempre que el bot haya decidido ejecutar.
+    # Si bot1 esta caido (failed), seguimos monitoreando via Price Poller y
+    # el usuario puede revisar el resultado en Excel con learn_from_excel.py.
+    params = decision.get("params", {})
+    pending_q_decisions[order_id] = {
+        "state":         state,
+        "action":        ql_action,
+        "timestamp":     datetime.now(timezone.utc).isoformat(),
+        "ticker":        ticker,
+        "original_side": decision["original_action"],
+        "executed_side": side,
+        # campos para PricePoller
+        "strategy_id":   strategy_id,
+        "symbol":        ticker,
+        "side":          side,
+        "entry_price":   float(params.get("price", 0.0)),
+        "sl":            float(params.get("sl",    0.0)),
+        "tp":            float(params.get("tp",    0.0)),
+        "open_time":     datetime.now(timezone.utc).isoformat(),
+        "bot1_status":   webhook_status,
+    }
 
     log_entry = {
         "event_id":       event_id,
@@ -754,7 +761,9 @@ async def webhook_strategy(
             "q_value":     q_value,
             "reason":      decision["reason"],
         }
-        _log_decision(log_entry)
+        _log_decision(log_entry, strategy_id=strategy_id)
+        excel_row = _build_excel_row_strategy(event_id, decision, False, "skipped", "", worker)
+        background_tasks.add_task(append_excel_rows, [excel_row], strategy_id)
         background_tasks.add_task(_write_event_report, {**log_entry, "dry_run": config.DRY_RUN}, strategy_id)
 
         return {
@@ -860,21 +869,30 @@ async def strategy_update(strategy_id: str, req: UpdateRequest):
     if not worker:
         raise HTTPException(status_code=404, detail=f"Strategy '{strategy_id}' no encontrada")
 
-    if req.order_id not in pending_q_decisions:
+    # Si vienen state y action directos (desde learn_from_excel.py), los usamos sin
+    # necesitar que el order_id este en pending_q_decisions.
+    if req.state and req.action:
+        state  = req.state
+        action = req.action
+        pending_q_decisions.pop(req.order_id, None)  # limpiar si existia
+    elif req.order_id in pending_q_decisions:
+        pending = pending_q_decisions.pop(req.order_id)
+        if pending.get("strategy_id") != strategy_id:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Order '{req.order_id}' pertenece a '{pending.get('strategy_id')}', no '{strategy_id}'",
+            )
+        state  = pending["state"]
+        action = pending["action"]
+    else:
         raise HTTPException(
             status_code=404,
-            detail=f"Order '{req.order_id}' no encontrada en decisiones pendientes",
+            detail=(
+                f"Order '{req.order_id}' no encontrada. "
+                "Pasa 'state' y 'action' directamente para actualizar sin pendiente."
+            ),
         )
 
-    pending = pending_q_decisions.pop(req.order_id)
-    if pending.get("strategy_id") != strategy_id:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Order '{req.order_id}' pertenece a estrategia '{pending.get('strategy_id')}', no '{strategy_id}'",
-        )
-
-    state      = pending["state"]
-    action     = pending["action"]
     next_state = req.next_state or state
 
     trade_result = {
