@@ -91,3 +91,12 @@
 {"ts": "2026-05-10T17:22:26.605551", "s": "trend_up|bullish|breakout|bull|extreme", "a": "EXECUTE_HALF", "r": 0.517902, "s_next": "trend_up|bullish|breakout|bull|extreme", "done": false}
 {"ts": "2026-05-10T17:32:32.645668", "s": "trend_up|bullish|breakout|bull|extreme", "a": "EXECUTE_HALF", "r": -0.267574, "s_next": "trend_up|bullish|breakout|bull|extreme", "done": false}
 {"ts": "2026-05-10T18:14:57.649382", "s": "trend_up|bullish|breakout|bull|extreme", "a": "EXECUTE_HALF", "r": 0.564794, "s_next": "trend_up|bullish|breakout|bull|extreme", "done": false}
+{"ts": "2026-05-10T18:55:04.255686", "s": "trend_up|bullish|breakout|bull|strong", "a": "EXECUTE_FULL", "r": -0.247835, "s_next": "trend_up|bullish|breakout|bull|strong", "done": false}
+{"ts": "2026-05-10T18:57:08.281842", "s": "trend_up|bullish|breakout|bull|strong", "a": "EXECUTE_FULL", "r": -0.243117, "s_next": "trend_up|bullish|breakout|bull|strong", "done": false}
+{"ts": "2026-05-10T20:16:22.869505", "s": "range|bearish|breakout|bull|weak", "a": "EXECUTE_FULL", "r": 0.4687, "s_next": "range|bearish|breakout|bull|weak", "done": false}
+{"ts": "2026-05-10T20:48:30.807804", "s": "trend_down|bearish|breakout|bull|extreme", "a": "EXECUTE_FULL", "r": 0.646723, "s_next": "trend_down|bearish|breakout|bull|extreme", "done": false}
+{"ts": "2026-05-10T20:51:31.689801", "s": "trend_down|bearish|breakout|bull|extreme", "a": "EXECUTE_FULL", "r": -0.440708, "s_next": "trend_down|bearish|breakout|bull|extreme", "done": false}
+{"ts": "2026-05-10T22:04:39.358740", "s": "range|bullish|breakout|bull|strong", "a": "EXECUTE_HALF", "r": -0.298988, "s_next": "range|bullish|breakout|bull|strong", "done": false}
+{"ts": "2026-05-10T22:33:53.655502", "s": "range|bullish|trend|bull|weak", "a": "EXECUTE_FULL", "r": -0.303103, "s_next": "range|bullish|trend|bull|weak", "done": false}
+{"ts": "2026-05-10T22:39:57.496248", "s": "range|bullish|breakout|bull|strong", "a": "EXECUTE_HALF", "r": -0.35621, "s_next": "range|bullish|breakout|bull|strong", "done": false}
+{"ts": "2026-05-11T00:22:41.718679", "s": "trend_down|bearish|breakout|bull|strong", "a": "EXECUTE_HALF", "r": -0.256116, "s_next": "trend_down|bearish|breakout|bull|strong", "done": false}

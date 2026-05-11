@@ -67,7 +67,7 @@
   },
   "trend_down|bearish|breakout|bull|strong": {
     "EXECUTE_FULL": -0.015607834299328043,
-    "EXECUTE_HALF": 0.05722731837332787,
+    "EXECUTE_HALF": 0.08204473444111271,
     "SKIP": 0.0,
     "INVERT": -0.02077009920405541
   },

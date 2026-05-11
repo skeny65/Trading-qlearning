@@ -41,11 +41,25 @@ COLUMNS = [
     "reason",
     "epsilon",
     "alpha",
-    # Revision manual del trader (el bot deja estas columnas vacias)
-    "result",      # Llena tu: WIN / LOSS  (dejar vacio = no revisado)
-    "pnl_notes",   # Notas opcionales: "+2.3%", "SL justo antes de revertir", etc.
-    "learned_at",  # Lo llena learn_from_excel.py automaticamente al procesar
+    # Llenadas automaticamente por el Price Poller cuando cierra la posicion
+    "result",      # WIN o LOSS
+    "pnl_notes",   # "+1.45% | TP_HIT | 47min | R=2.34x"
+    "learned_at",  # timestamp UTC del cierre
 ]
+
+# Columnas que se agregan automaticamente si el Excel es antiguo
+_NEW_COLUMNS = ["result", "pnl_notes", "learned_at"]
+
+_COL_WIDTHS = {
+    "timestamp_utc": 22, "event_id": 20, "strategy_id": 12, "mode": 8,
+    "symbol": 10, "tv_action": 9, "ql_action": 14, "ql_state": 40,
+    "q_value": 8, "regime": 10, "volatility": 10, "momentum": 10,
+    "price": 8, "sl": 8, "tp": 8, "atr": 7,
+    "execute": 8, "final_action": 12, "size": 7, "confidence": 11,
+    "webhook_status": 14, "order_id": 36, "reason": 30,
+    "epsilon": 8, "alpha": 7,
+    "result": 10, "pnl_notes": 35, "learned_at": 22,
+}
 
 
 def get_excel_path(strategy_id: str = "qlearning") -> str:
@@ -53,53 +67,74 @@ def get_excel_path(strategy_id: str = "qlearning") -> str:
 
 
 def _format_header(ws) -> None:
-    """Aplica formato a la fila de cabecera: fondo azul oscuro, texto blanco, anchos utiles."""
+    """Aplica formato a la fila de cabecera: fondo azul oscuro, texto blanco, columnas anchas."""
     try:
         from openpyxl.styles import Font, PatternFill, Alignment
         header_fill = PatternFill("solid", fgColor="1F4E79")
         header_font = Font(bold=True, color="FFFFFF")
         for cell in ws[1]:
-            cell.font      = header_font
-            cell.fill      = header_fill
-            cell.alignment = Alignment(horizontal="center")
+            if cell.value:
+                cell.font      = header_font
+                cell.fill      = header_fill
+                cell.alignment = Alignment(horizontal="center")
+                col_letter = cell.column_letter
+                ws.column_dimensions[col_letter].width = _COL_WIDTHS.get(str(cell.value).lower(), 14)
         ws.freeze_panes = "A2"
-        # Anchos utiles
-        col_widths = {
-            "timestamp_utc": 22, "event_id": 20, "strategy_id": 12, "mode": 8,
-            "symbol": 10, "tv_action": 9, "ql_action": 14, "ql_state": 40,
-            "q_value": 8, "regime": 10, "volatility": 10, "momentum": 10,
-            "price": 8, "sl": 8, "tp": 8, "atr": 7,
-            "execute": 8, "final_action": 12, "size": 7, "confidence": 11,
-            "webhook_status": 14, "order_id": 36, "reason": 30,
-            "epsilon": 8, "alpha": 7,
-            "result": 8, "pnl_notes": 28, "learned_at": 22,
-        }
-        for col_idx, col_name in enumerate(COLUMNS, 1):
-            col_letter = ws.cell(1, col_idx).column_letter
-            ws.column_dimensions[col_letter].width = col_widths.get(col_name, 14)
     except Exception as e:
         logger.debug(f"Formato de cabecera no aplicado: {e}")
 
 
+def _migrate_columns(ws) -> dict:
+    """
+    Detecta columnas nuevas (result, pnl_notes, learned_at) que no existen
+    en el archivo y las agrega al final de la fila de cabecera con formato.
+
+    Retorna el mapa {nombre_columna: indice_1based} de TODAS las columnas presentes.
+    """
+    try:
+        from openpyxl.styles import Font, PatternFill, Alignment
+        header_fill = PatternFill("solid", fgColor="1F4E79")
+        header_font = Font(bold=True, color="FFFFFF")
+    except Exception:
+        header_fill = None
+        header_font = None
+
+    # Mapa actual de columnas en el archivo
+    header_row = next(ws.iter_rows(min_row=1, max_row=1))
+    col_map    = {str(cell.value).lower(): cell.column for cell in header_row if cell.value}
+
+    # Agregar columnas nuevas si faltan
+    next_col = ws.max_column + 1
+    for col_name in _NEW_COLUMNS:
+        if col_name not in col_map:
+            cell = ws.cell(row=1, column=next_col, value=col_name)
+            if header_font:
+                cell.font      = header_font
+                cell.fill      = header_fill
+                cell.alignment = Alignment(horizontal="center")
+            ws.column_dimensions[cell.column_letter].width = _COL_WIDTHS.get(col_name, 14)
+            col_map[col_name] = next_col
+            logger.info(f"Columna '{col_name}' agregada al Excel existente (col {next_col})")
+            next_col += 1
+
+    return col_map
+
+
 def update_excel_result(
     order_id:    str,
-    result:      str,   # "WIN" o "LOSS"
-    strategy_id: str   = "qlearning",
-    pnl_notes:   str   = "",
+    result:      str,
+    strategy_id: str = "qlearning",
+    pnl_notes:   str = "",
 ) -> bool:
     """
-    Busca la fila con order_id dado en el Excel de la estrategia y escribe:
-      - result    -> "WIN" o "LOSS"
-      - pnl_notes -> descripcion del cierre (pnl%, TP_HIT/SL_HIT, etc.)
-      - learned_at -> timestamp actual
-
-    Retorna True si encontro y actualizo la fila, False si no la encontro.
-    Llamado automaticamente por PricePoller cuando detecta TP o SL.
+    Busca la fila con order_id en el Excel y escribe result, pnl_notes, learned_at.
+    Si las columnas no existen (Excel antiguo), las migra automaticamente.
+    Llamado por PricePoller cuando detecta TP o SL.
     """
     try:
         import openpyxl
     except ImportError:
-        logger.warning("openpyxl no instalado - update_excel_result desactivado")
+        logger.warning("openpyxl no instalado")
         return False
 
     excel_path = get_excel_path(strategy_id)
@@ -110,32 +145,29 @@ def update_excel_result(
         wb = openpyxl.load_workbook(excel_path)
         ws = wb.active
     except PermissionError:
-        logger.warning(f"Excel abierto en otro programa [{strategy_id}] - resultado no actualizado para {order_id}")
+        logger.warning(f"Excel abierto [{strategy_id}] - cierra Excel para ver resultados automaticos")
         return False
     except Exception as e:
         logger.error(f"Error abriendo Excel [{strategy_id}]: {e}")
         return False
 
-    # Construir mapa columna -> indice (1-based)
-    header_row = next(ws.iter_rows(min_row=1, max_row=1))
-    col_map    = {str(cell.value).lower(): cell.column for cell in header_row if cell.value}
-
+    # Migrar columnas si el archivo es antiguo, obtener mapa actualizado
+    col_map     = _migrate_columns(ws)
     order_col   = col_map.get("order_id")
     result_col  = col_map.get("result")
     notes_col   = col_map.get("pnl_notes")
     learned_col = col_map.get("learned_at")
 
     if not all([order_col, result_col, notes_col, learned_col]):
-        logger.warning(f"Excel [{strategy_id}] no tiene columnas esperadas - regenerar con bot3 actual")
+        logger.error(f"Excel [{strategy_id}]: no se encontro columna order_id")
         return False
 
     now_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     found  = False
 
     for row in ws.iter_rows(min_row=2):
-        cell_order = row[order_col - 1]
-        if str(cell_order.value or "").strip() == order_id:
-            # Solo actualizar si aun no tiene resultado (no sobreescribir edicion manual)
+        if str(row[order_col - 1].value or "").strip() == order_id:
+            # No sobreescribir si el trader ya puso algo manualmente
             if not row[result_col - 1].value:
                 row[result_col  - 1].value = result
                 row[notes_col   - 1].value = pnl_notes
@@ -146,9 +178,9 @@ def update_excel_result(
     if found:
         try:
             wb.save(excel_path)
-            logger.info(f"Excel [{strategy_id}] actualizado: order={order_id} result={result} notes={pnl_notes}")
+            logger.info(f"Excel [{strategy_id}] result={result} order={order_id} notes={pnl_notes}")
         except PermissionError:
-            logger.warning(f"Excel abierto en otro programa [{strategy_id}] - cierra Excel para ver resultados")
+            logger.warning(f"Excel abierto [{strategy_id}] - no se pudo guardar resultado")
             return False
         except Exception as e:
             logger.error(f"Error guardando Excel [{strategy_id}]: {e}")
@@ -159,8 +191,9 @@ def update_excel_result(
 
 def append_excel_rows(rows: list, strategy_id: str = "qlearning") -> None:
     """
-    Acumula filas en logs/{strategy_id}/trade_log.xlsx.
-    Crea el archivo si no existe. Agrega filas si ya existe.
+    Agrega filas a logs/{strategy_id}/trade_log.xlsx.
+    Crea el archivo si no existe.
+    Si el archivo es antiguo (sin columnas result/pnl_notes/learned_at), las migra.
     """
     if not rows:
         return
@@ -178,15 +211,21 @@ def append_excel_rows(rows: list, strategy_id: str = "qlearning") -> None:
         if os.path.exists(excel_path):
             wb = openpyxl.load_workbook(excel_path)
             ws = wb.active
+            # Migrar columnas nuevas si el archivo es de una version anterior
+            col_map = _migrate_columns(ws)
         else:
             wb = openpyxl.Workbook()
             ws = wb.active
             ws.title = f"{strategy_id}_decisions"
             ws.append(COLUMNS)
             _format_header(ws)
+            col_map = {name: idx + 1 for idx, name in enumerate(COLUMNS)}
 
-        for row in rows:
-            ws.append([row.get(col, "") for col in COLUMNS])
+        # Agregar filas nuevas usando el orden de columnas del archivo actual
+        ordered_cols = sorted(col_map.items(), key=lambda x: x[1])
+        col_names    = [name for name, _ in ordered_cols]
+        for row_data in rows:
+            ws.append([row_data.get(col, "") for col in col_names])
 
         wb.save(excel_path)
         logger.debug(f"Excel [{strategy_id}]: +{len(rows)} fila(s) -> {excel_path}")
@@ -195,3 +234,42 @@ def append_excel_rows(rows: list, strategy_id: str = "qlearning") -> None:
         logger.warning(f"Excel abierto en otro programa: {excel_path}")
     except Exception as e:
         logger.error(f"Error escribiendo Excel [{strategy_id}]: {e}")
+
+
+def migrate_all_excel(strategies: list = None) -> None:
+    """
+    Migra manualmente los Excel de todas las estrategias para agregar
+    las columnas result, pnl_notes, learned_at si no existen.
+
+    Llamar una vez despues de actualizar bot3:
+        from utils.excel_logger import migrate_all_excel
+        migrate_all_excel()
+
+    O desde PowerShell:
+        python -c "from utils.excel_logger import migrate_all_excel; migrate_all_excel()"
+    """
+    try:
+        import openpyxl
+    except ImportError:
+        print("ERROR: pip install openpyxl")
+        return
+
+    if strategies is None:
+        strategies = ["apuesta", "qlearning", "tanque"]
+
+    for strategy_id in strategies:
+        excel_path = get_excel_path(strategy_id)
+        if not os.path.exists(excel_path):
+            print(f"[{strategy_id}] Sin Excel todavia: {excel_path}")
+            continue
+        try:
+            wb = openpyxl.load_workbook(excel_path)
+            ws = wb.active
+            col_map = _migrate_columns(ws)
+            wb.save(excel_path)
+            added = [c for c in _NEW_COLUMNS if c in col_map]
+            print(f"[{strategy_id}] OK - columnas presentes: {added}")
+        except PermissionError:
+            print(f"[{strategy_id}] ERROR: Excel abierto. Cierra Excel y vuelve a correr.")
+        except Exception as e:
+            print(f"[{strategy_id}] ERROR: {e}")

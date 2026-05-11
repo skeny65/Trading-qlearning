@@ -30,7 +30,7 @@
     "INVERT": 0.0
   },
   "range|bearish|breakout|bull|weak": {
-    "EXECUTE_FULL": 0.10142668271609609,
+    "EXECUTE_FULL": 0.05769983496840998,
     "EXECUTE_HALF": 0.0,
     "SKIP": 0.0,
     "INVERT": 0.0
@@ -43,12 +43,12 @@
   },
   "range|bullish|breakout|bull|strong": {
     "EXECUTE_FULL": 0.012069823551887585,
-    "EXECUTE_HALF": 0.046820542087014895,
+    "EXECUTE_HALF": 0.11025603117596346,
     "SKIP": 0.0,
     "INVERT": 0.0
   },
   "trend_up|bullish|breakout|bull|strong": {
-    "EXECUTE_FULL": -0.008087481669471555,
+    "EXECUTE_FULL": 0.015041759806340486,
     "EXECUTE_HALF": -0.02197126401367315,
     "SKIP": 0.0,
     "INVERT": 0.0
@@ -67,7 +67,7 @@
   },
   "trend_down|bearish|breakout|bull|strong": {
     "EXECUTE_FULL": -0.015607834299328043,
-    "EXECUTE_HALF": 0.05722731837332787,
+    "EXECUTE_HALF": 0.08204473444111271,
     "SKIP": 0.0,
     "INVERT": -0.02077009920405541
   },
@@ -92,18 +92,6 @@
   "trend_up|bullish|breakout|bull|extreme": {
     "EXECUTE_FULL": -0.018965842943724588,
     "EXECUTE_HALF": 0.0766108755583097,
-    "SKIP": 0.0,
-    "INVERT": 0.0
-  },
-  "trend_down|bearish|breakout|bull|extreme": {
-    "EXECUTE_FULL": 0.018906344920454857,
-    "EXECUTE_HALF": 0.0,
-    "SKIP": 0.0,
-    "INVERT": 0.0
-  },
-  "range|bullish|trend|bull|weak": {
-    "EXECUTE_FULL": -0.02851576432023403,
-    "EXECUTE_HALF": 0.0,
     "SKIP": 0.0,
     "INVERT": 0.0
   }
