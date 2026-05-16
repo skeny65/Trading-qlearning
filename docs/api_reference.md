@@ -12,9 +12,9 @@ Estado completo del sistema.
 {
   "status":        "ok",
   "dry_run":       false,
-  "price_poller":  {"running": true, "poll_interval_sec": 60, "monitored_trades": 2},
-  "pending_count": 2,
-  "strategies":    ["apuesta", "qlearning", "tanque"]
+  "price_poller":  {"running": true, "poll_interval_sec": 60, "monitored_trades": 1},
+  "pending_count": 1,
+  "strategies":    ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]
 }
 ```
 
@@ -22,40 +22,75 @@ Estado completo del sistema.
 
 ## `POST /webhook/strategy/{id}`
 
-Recibe alertas de TradingView. Estrategias: `apuesta`, `qlearning`, `tanque`.
+Recibe alertas de TradingView. `{id}` puede ser `1` al `10`.
+
+**URL de produccion:**
+```
+https://shaft-goliath-shakable.ngrok-free.dev/webhook/strategy/{id}?secret=mi_secreto_webhook_123
+```
 
 **Headers:**
 ```
 Content-Type:     application/json
-X-Webhook-Secret: <TV_WEBHOOK_SECRET>
+X-Webhook-Secret: <TV_WEBHOOK_SECRET>   (alternativa al query param ?secret=)
 ```
+
+### Alerta de apertura (`signal_type: "open"`)
+
+El bot pasa la señal por Q-Learning y decide si ejecutar.
 
 **Respuestas:**
 
-| HTTP | status                | Descripcion                                         |
-|------|-----------------------|-----------------------------------------------------|
-| 200  | queued                | Bot decidio ejecutar, enviando a bot1 en background |
-| 200  | skipped_by_qlearning  | Q-Learning decidio SKIP                             |
-| 200  | received_no_signal    | status != "pending", sin accion                     |
-| 401  | -                     | X-Webhook-Secret incorrecto                         |
-| 404  | -                     | strategy_id no existe                               |
+| HTTP | status               | Descripcion                                         |
+|------|----------------------|-----------------------------------------------------|
+| 200  | queued               | Q-Learning decidio ejecutar, enviando a bot1        |
+| 200  | skipped_by_qlearning | Q-Learning decidio SKIP                             |
+| 200  | received_no_signal   | status != "pending", sin accion                     |
+| 401  | -                    | Secret incorrecto                                   |
+| 404  | -                    | strategy_id no existe                               |
 
 **Respuesta cuando ejecuta:**
 ```json
 {
-  "strategy":        "qlearning",
+  "strategy":        "1",
   "ticker":          "SOLUSDT",
   "original_action": "buy",
   "ql_action":       "EXECUTE_FULL",
-  "state":           "trend_up|bullish|breakout|bull|extreme",
+  "state":           "wide|strong|far",
   "q_value":         0.3842,
   "execute":         true,
   "side":            "buy",
   "size":            0.1,
   "status":          "queued",
-  "event_id":        "20260509_142300123456",
+  "event_id":        "20260516_142300123456",
   "dry_run":         false,
-  "timestamp":       "2026-05-09T14:23:00.000000+00:00"
+  "timestamp":       "2026-05-16T14:23:00.000000+00:00"
+}
+```
+
+### Alerta de cierre (`signal_type: "close"`) — estrategias 1 y 2
+
+El bot cierra la posicion inmediatamente y actualiza Q-table al instante.
+
+**Respuestas:**
+
+| HTTP | status                  | Descripcion                                            |
+|------|-------------------------|--------------------------------------------------------|
+| 200  | close_queued            | Cierre enviado a bot1, Q-table y Excel actualizados    |
+| 200  | close_no_open_tracked   | No habia apertura rastreada (bot reiniciado)           |
+
+**Respuesta:**
+```json
+{
+  "strategy":    "1",
+  "symbol":      "SOLUSDT",
+  "signal_type": "close",
+  "action":      "close_buy",
+  "close_reason": "cross",
+  "pnl_pct":     -0.29,
+  "open_found":  true,
+  "status":      "close_queued",
+  "timestamp":   "2026-05-16T14:55:00.000000+00:00"
 }
 ```
 
@@ -68,11 +103,14 @@ Lista todas las estrategias con su estado actual.
 ```json
 {
   "strategies": {
-    "apuesta":   {"strategy_id": "apuesta",   "paused": false, "epsilon": 0.2000, "qtable_states": 0},
-    "qlearning": {"strategy_id": "qlearning", "paused": false, "epsilon": 0.1980, "qtable_states": 12},
-    "tanque":    {"strategy_id": "tanque",    "paused": false, "epsilon": 0.2000, "qtable_states": 0}
+    "1":  {"strategy_id": "1",  "paused": false, "epsilon": 0.2000, "qtable_states": 5},
+    "2":  {"strategy_id": "2",  "paused": false, "epsilon": 0.1980, "qtable_states": 12},
+    "3":  {"strategy_id": "3",  "paused": false, "epsilon": 0.2000, "qtable_states": 0},
+    "4":  {"strategy_id": "4",  "paused": false, "epsilon": 0.2000, "qtable_states": 0},
+    ...
+    "10": {"strategy_id": "10", "paused": false, "epsilon": 0.2000, "qtable_states": 0}
   },
-  "count": 3
+  "count": 10
 }
 ```
 
@@ -84,7 +122,7 @@ Estado del agente de una estrategia.
 
 ```json
 {
-  "strategy_id":   "qlearning",
+  "strategy_id":   "2",
   "paused":        false,
   "epsilon":       0.1980,
   "alpha":         0.0990,
@@ -99,15 +137,15 @@ Estado del agente de una estrategia.
 Pausa o reactiva el agente manualmente.
 
 ```powershell
-Invoke-WebRequest -Uri http://localhost:8001/api/strategy/qlearning/pause  -Method POST
-Invoke-WebRequest -Uri http://localhost:8001/api/strategy/qlearning/resume -Method POST
+Invoke-WebRequest -Uri http://localhost:8001/api/strategy/1/pause  -Method POST
+Invoke-WebRequest -Uri http://localhost:8001/api/strategy/2/resume -Method POST
 ```
 
 ---
 
 ## `POST /api/strategy/{id}/update`
 
-Aprendizaje manual. Dos modos:
+Aprendizaje manual (para estrategias 3-10 o correcciones en 1-2).
 
 **Modo 1 — por order_id** (si la posicion esta en pending_q_decisions):
 ```json
@@ -122,10 +160,10 @@ Aprendizaje manual. Dos modos:
 **Modo 2 — directo con state y action** (funciona aunque bot3 se haya reiniciado):
 ```json
 {
-  "order_id":    "20260509_142300123456",
+  "order_id":    "20260516_142300123456",
   "pnl_pct":     1.45,
   "duration_min": 47.0,
-  "state":       "trend_up|bullish|breakout|bull|extreme",
+  "state":       "wide|strong|far",
   "action":      "EXECUTE_FULL"
 }
 ```
@@ -151,7 +189,7 @@ Resumen del diario de aprendizaje.
 
 ```json
 {
-  "strategy_id":    "qlearning",
+  "strategy_id":    "2",
   "total_updates":  47,
   "blocked_states": [{"state": "range|bearish|...", "action": "EXECUTE_FULL", "q": -0.42}],
   "best_states":    [{"state": "trend_up|bullish|...", "action": "EXECUTE_FULL", "q": 0.38}],
@@ -175,16 +213,17 @@ Regenera y retorna el contenido de `logs/{id}/INSIGHTS.md`.
 
 ## `GET /pending`
 
-Posiciones siendo monitoreadas por el Price Poller.
+Posiciones siendo monitoreadas por el Price Poller (estrategias 3-10).
+Las estrategias 1 y 2 aprenden por alerta de cierre, no aparecen aqui tras el cierre.
 
 ```json
 {
   "pending": {
-    "20260509_142300123456": {
+    "20260516_142300123456": {
       "symbol": "SOLUSDT", "side": "buy",
       "entry_price": 93.73, "sl": 93.63, "tp": 93.93,
       "state": "trend_up|bullish|breakout|bull|extreme",
-      "strategy_id": "qlearning", "bot1_status": "executed"
+      "strategy_id": "2", "bot1_status": "executed"
     }
   },
   "count": 1
@@ -193,12 +232,12 @@ Posiciones siendo monitoreadas por el Price Poller.
 
 ---
 
-## Endpoints legacy (compatibilidad)
+## Endpoints legacy (compatibilidad con flujo original)
 
-| Metodo | Endpoint          | Descripcion                        |
-|--------|-------------------|------------------------------------|
-| POST   | /webhook/tv       | Mismo que /webhook/strategy/qlearning |
-| GET    | /qlearning/status | Alias de /api/strategy/qlearning/status |
-| POST   | /qlearning/update | Alias de /api/strategy/qlearning/update |
-| POST   | /qlearning/pause  | Alias de /api/strategy/qlearning/pause |
-| POST   | /qlearning/resume | Alias de /api/strategy/qlearning/resume |
+| Metodo | Endpoint          | Descripcion                          |
+|--------|-------------------|--------------------------------------|
+| POST   | /webhook/tv       | Mismo que /webhook/strategy/2        |
+| GET    | /qlearning/status | Alias de /api/strategy/2/status      |
+| POST   | /qlearning/update | Alias de /api/strategy/2/update      |
+| POST   | /qlearning/pause  | Alias de /api/strategy/2/pause       |
+| POST   | /qlearning/resume | Alias de /api/strategy/2/resume      |

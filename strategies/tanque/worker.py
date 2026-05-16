@@ -32,7 +32,7 @@ from core.strategy_worker import StrategyWorker
 
 
 class TanqueWorker(StrategyWorker):
-    strategy_id = "tanque"
+    strategy_id = "3"
 
     def encode_state(self, params: dict) -> str:
         """

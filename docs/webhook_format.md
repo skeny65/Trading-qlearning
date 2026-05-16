@@ -1,8 +1,17 @@
 # Webhook Format - bot3 Multi-Strategy
 
-## Endpoint principal: `/webhook/strategy/{id}`
+## Endpoint
 
-**Header:**
+```
+POST /webhook/strategy/{id}
+```
+
+**URL de produccion:**
+```
+https://shaft-goliath-shakable.ngrok-free.dev/webhook/strategy/1?secret=mi_secreto_webhook_123
+```
+
+**Header alternativo:**
 ```
 Content-Type:     application/json
 X-Webhook-Secret: <valor de TV_WEBHOOK_SECRET en .env>
@@ -10,14 +19,97 @@ X-Webhook-Secret: <valor de TV_WEBHOOK_SECRET en .env>
 
 ---
 
-## Formato para la estrategia `qlearning` (5D - 243 estados)
+## Estrategia 1 — TEMA 21/55 + DEMA 200 (flujo 2 alertas)
+
+La estrategia 1 utiliza **2 alertas por operacion**: una al abrir y otra al cerrar.
+El Pine Script gestiona la logica de entrada/salida; bot3 aprende del resultado.
+
+### Alerta 1 — APERTURA (`signal_type: "open"`)
 
 ```json
 {
-  "timestamp": "2026-05-08T14:23:00Z",
-  "status":    "pending",
-  "processed": false,
-  "source":    "tradingview",
+  "status": "pending",
+  "signal": {
+    "symbol":      "SOLUSDT",
+    "action":      "buy",
+    "signal_type": "open",
+    "size":        0.1,
+    "params": {
+      "price":         91.57,
+      "f1_sep":        0.627,
+      "f2_angle":      0.906,
+      "f3_d200":       1.701,
+      "anti_parallel": "libre",
+      "d200_trend":    "bajista",
+      "slope":         "up"
+    }
+  }
+}
+```
+
+> Para VENTA corta: `"action": "sell"` y `"slope": "down"`
+
+**Que hace bot3:**
+1. Extrae `f1_sep`, `f2_angle`, `f3_d200` y los convierte al estado Q
+2. Q-Learning decide: `EXECUTE_FULL`, `EXECUTE_HALF`, `SKIP` o `INVERT`
+3. Si ejecuta → envia a bot1 + guarda estado/accion en `open_positions[(1, SOLUSDT)]`
+4. Registra en Excel y decision_log
+
+**Estado Q resultante (27 combinaciones):**
+
+| Dimension | Niveles | Umbral |
+|-----------|---------|--------|
+| f1_level  | wide / mid / tight  | >=0.5% / >=0.2% / <0.2% |
+| f2_level  | strong / mid / flat | >=0.5% / >=0.2% / <0.2% |
+| f3_level  | far / mid / near    | >=1.0% / >=0.3% / <0.3% |
+
+Ejemplo: `"wide|strong|far"` → entrada en tendencia fuerte, lejos de DEMA200.
+
+---
+
+### Alerta 2 — CIERRE (`signal_type: "close"`)
+
+```json
+{
+  "status": "pending",
+  "signal": {
+    "symbol":      "SOLUSDT",
+    "action":      "close_buy",
+    "signal_type": "close",
+    "size":        0.1,
+    "params": {
+      "price":        91.30,
+      "entry_price":  91.57,
+      "close_reason": "cross",
+      "pnl_pct":      -0.29
+    }
+  }
+}
+```
+
+> Para cerrar corto: `"action": "close_sell"`
+> `close_reason`: `"cross"` (cruce opuesto) o `"anti_parallel"` (filtro bloqueado)
+
+**Que hace bot3:**
+1. Bypass Q-Learning → el cierre **siempre** se ejecuta
+2. Envia orden de cierre a bot1
+3. Recupera el estado/accion de la apertura via `open_positions`
+4. Calcula `reward` con `pnl_pct` y duracion
+5. Actualiza Q-table **inmediatamente** (sin esperar al Price Poller)
+6. Escribe `WIN`/`LOSS` en el Excel con `pnl_notes`
+
+**Si pnl_pct no viene en el payload**, bot3 lo calcula:
+```
+pnl_pct = (close_price - entry_price) / entry_price * 100
+```
+
+---
+
+## Estrategia 2 — QLearning 5D (243 estados, 1 alerta)
+
+```json
+{
+  "status": "pending",
   "signal": {
     "symbol":     "SOLUSDT",
     "action":     "buy",
@@ -29,7 +121,6 @@ X-Webhook-Secret: <valor de TV_WEBHOOK_SECRET en .env>
       "tp":             93.93,
       "atr":            0.066,
       "adx":            40.66,
-      "rsi":            68.66,
       "regime":         "trend_up",
       "momentum":       "bullish",
       "setup_type":     "breakout",
@@ -40,61 +131,16 @@ X-Webhook-Secret: <valor de TV_WEBHOOK_SECRET en .env>
 }
 ```
 
-**Campos `params` para qlearning:**
-
-| Campo          | Tipo  | Valores validos                             | Usado para          |
-|----------------|-------|---------------------------------------------|---------------------|
-| price          | float | precio de entrada                           | entry_price en poller|
-| sl             | float | stop loss                                   | cierre automatico   |
-| tp             | float | take profit                                 | cierre automatico   |
-| atr            | float | ATR en el momento de la senal               | contexto            |
-| adx            | float | ADX (0-100)                                 | trend_strength fallback |
-| rsi            | float | RSI (0-100)                                 | contexto            |
-| regime         | str   | trend_up \| trend_down \| range             | estado 5D           |
-| momentum       | str   | bullish \| bearish \| neutral               | estado 5D           |
-| setup_type     | str   | breakout \| pullback \| trend               | estado 5D           |
-| htf_bias       | str   | bull \| bear \| neutral (o bullish/bearish) | estado 5D           |
-| trend_strength | str   | extreme \| strong \| moderate \| weak       | estado 5D           |
-
-**IMPORTANTE:** `sl` y `tp` son necesarios para que el Price Poller detecte el cierre
-automaticamente y el agente aprenda. Sin ellos, el aprendizaje debera hacerse manual.
+Estado 5D: `regime|momentum|setup_type|htf_bias|trend_strength`
+El cierre lo detecta el **Price Poller** (API Binance cada 60s via sl/tp).
 
 ---
 
-## Formato para la estrategia `apuesta` (3D - 36 estados)
+## Estrategia 3 — Tanque (27 estados, 1 alerta)
 
 ```json
 {
-  "timestamp": "2026-05-08T14:23:00Z",
-  "status":    "pending",
-  "source":    "tradingview",
-  "signal": {
-    "symbol":     "SOLUSDT",
-    "action":     "buy",
-    "confidence": 0.75,
-    "size":       0.1,
-    "params": {
-      "price": 93.73,
-      "sl":    93.63,
-      "tp":    93.93,
-      "atr":   0.066
-    }
-  }
-}
-```
-
-La estrategia `apuesta` deriva el estado de: precio relativo al dia (price_zone),
-ratio R:R calculado de sl/tp (rr_level), y hora UTC de la senal (hour_zone).
-
----
-
-## Formato para la estrategia `tanque` (3D - 27 estados)
-
-```json
-{
-  "timestamp": "2026-05-08T14:23:00Z",
-  "status":    "pending",
-  "source":    "tradingview",
+  "status": "pending",
   "signal": {
     "symbol":     "SOLUSDT",
     "action":     "buy",
@@ -105,55 +151,96 @@ ratio R:R calculado de sl/tp (rr_level), y hora UTC de la senal (hour_zone).
       "sl":             93.63,
       "tp":             93.93,
       "entry_strength": "strong",
-      "pattern":        "engulfing"
+      "bar_count":      2,
+      "pattern":        "inside_bar"
     }
   }
 }
 ```
 
+Estado 3D: `entry_strength|bar_zone|pattern`
+
+---
+
+## Estrategias 4–10 — Scaffold (27 estados, 1 alerta)
+
+```json
+{
+  "status": "pending",
+  "signal": {
+    "symbol":     "SOLUSDT",
+    "action":     "buy",
+    "confidence": 0.75,
+    "size":       0.1,
+    "params": {
+      "price": 93.73,
+      "sl":    93.63,
+      "tp":    93.93
+    }
+  }
+}
+```
+
+Estado 3D: `price_zone|rr_level|hour_zone` (scaffold — personalizar en `strategies/eN/worker.py`).
+
 ---
 
 ## Reglas del envelope
 
-- El bot ignora silenciosamente envelopes con `status != "pending"`
-- `signal.action` puede ser `"buy"` o `"sell"` (minusculas)
-- `signal.size` es el size relativo (0.1 = 10% del portafolio en bot1)
-- El campo `strategy_id` dentro de `signal` es opcional; la URL ya identifica la estrategia
+- `status` debe ser `"pending"` (cualquier otro valor es ignorado)
+- `signal_type` es opcional; si no viene, se asume `"open"` (compatible con estrategias 2-10)
+- `signal.action` puede ser `"buy"`, `"sell"`, `"close_buy"`, `"close_sell"`
+- `signal.size` es fraccion del portafolio (0.1 = 10%)
 
 ---
 
 ## Test manual desde PowerShell
 
+### Apertura (estrategia 1):
 ```powershell
-$headers = @{
-    "Content-Type"     = "application/json"
-    "X-Webhook-Secret" = "mi_secreto_webhook_123"
-}
+$headers = @{ "Content-Type" = "application/json" }
 $body = @{
-    timestamp = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
-    status    = "pending"
-    source    = "tradingview"
-    signal    = @{
-        symbol     = "SOLUSDT"
-        action     = "buy"
-        confidence = 0.70
-        size       = 0.1
-        params     = @{
-            price          = 93.73
-            sl             = 93.63
-            tp             = 93.93
-            atr            = 0.066
-            adx            = 40.66
-            regime         = "trend_up"
-            momentum       = "bullish"
-            setup_type     = "breakout"
-            htf_bias       = "bull"
-            trend_strength = "extreme"
+    status = "pending"
+    signal = @{
+        symbol      = "SOLUSDT"
+        action      = "buy"
+        signal_type = "open"
+        size        = 0.1
+        params      = @{
+            price        = 91.57
+            f1_sep       = 0.627
+            f2_angle     = 0.906
+            f3_d200      = 1.701
+            close_reason = "libre"
+            d200_trend   = "bajista"
+            slope        = "up"
         }
     }
 } | ConvertTo-Json -Depth 5
 
-Invoke-WebRequest -Uri http://localhost:8001/webhook/strategy/qlearning `
+Invoke-WebRequest -Uri "http://localhost:8001/webhook/strategy/1?secret=mi_secreto_webhook_123" `
+    -Method POST -Headers $headers -Body $body
+```
+
+### Cierre (estrategia 1):
+```powershell
+$body = @{
+    status = "pending"
+    signal = @{
+        symbol      = "SOLUSDT"
+        action      = "close_buy"
+        signal_type = "close"
+        size        = 0.1
+        params      = @{
+            price        = 91.30
+            entry_price  = 91.57
+            close_reason = "cross"
+            pnl_pct      = -0.29
+        }
+    }
+} | ConvertTo-Json -Depth 5
+
+Invoke-WebRequest -Uri "http://localhost:8001/webhook/strategy/1?secret=mi_secreto_webhook_123" `
     -Method POST -Headers $headers -Body $body
 ```
 
@@ -161,33 +248,41 @@ Invoke-WebRequest -Uri http://localhost:8001/webhook/strategy/qlearning `
 
 ## Formato que bot3 envia a bot1 (`/webhook/bot3`)
 
-Cuando Q-Learning decide ejecutar, bot3 construye este payload y lo envia a bot1:
-
+### Apertura:
 ```json
 {
-  "timestamp": "2026-05-08T14:23:00Z",
-  "status":    "pending",
+  "status": "pending",
   "signal": {
-    "strategy_id": "bot3_qlearning",
+    "strategy_id": "bot3_1",
     "symbol":      "SOLUSDT",
     "action":      "buy",
-    "confidence":  0.70,
+    "confidence":  0.75,
     "size":        0.1,
     "params": {
-      "source":          "bot3_qlearning_agent",
-      "strategy":        "qlearning",
-      "ql_action":       "EXECUTE_FULL",
-      "ql_state":        "trend_up|bullish|breakout|bull|extreme",
-      "q_value":         0.3842,
-      "price":           93.73,
-      "sl":              93.63,
-      "tp":              93.93,
-      "atr":             0.066,
-      "regime":          "trend_up",
-      "momentum":        "bullish"
+      "ql_action": "EXECUTE_FULL",
+      "ql_state":  "wide|strong|far",
+      "q_value":   0.3842,
+      "price":     91.57
     }
   }
 }
 ```
 
-Header: `X-Webhook-Secret: <BOT1_WEBHOOK_SECRET>`
+### Cierre:
+```json
+{
+  "status": "pending",
+  "signal": {
+    "strategy_id": "bot3_1",
+    "symbol":      "SOLUSDT",
+    "action":      "sell",
+    "confidence":  1.0,
+    "size":        0.1,
+    "params": {
+      "ql_action":    "CLOSE",
+      "ql_state":     "wide|strong|far",
+      "close_reason": "cross"
+    }
+  }
+}
+```

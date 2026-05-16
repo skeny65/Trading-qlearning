@@ -1,24 +1,27 @@
 """
-Estrategia QLEARNING - Worker Q-Learning.
+Estrategia 2 (QLEARNING) - Worker Q-Learning.
 
 Estado 5D: regime | momentum | setup_type | htf_bias | trend_strength
            3      x 3        x 3          x 3        x 3  = 243 estados
 
-Mas rico que el estado 3D anterior (regime|volatility|momentum = 27 estados).
 Permite al agente distinguir, por ejemplo:
   "trend_up|bullish|breakout|bull|extreme"  → EXECUTE_FULL aprendido
   "trend_up|bullish|breakout|bear|weak"     → SKIP aprendido (contra-tendencia HTF)
 
-Payload esperado de TradingView:
+Flujo de 2 alertas por operacion:
+    Alerta 1 (signal_type: "open")  -> Q-Learning decide si ejecutar
+    Alerta 2 (signal_type: "close") -> cierre inmediato + update Q
+
+Payload apertura (TradingView):
 {
   "status": "pending",
   "signal": {
-    "symbol": "SOLUSDT",
-    "action": "buy",
-    "confidence": 0.7,
-    "size": 0.1,
+    "symbol":      "SOLUSDT",
+    "action":      "buy",
+    "signal_type": "open",
+    "confidence":  0.7,
+    "size":        0.1,
     "params": {
-      "setup_type":     "breakout",
       "price":          93.73,
       "sl":             93.63,
       "tp":             93.93,
@@ -26,10 +29,27 @@ Payload esperado de TradingView:
       "adx":            40.66,
       "rsi":            68.66,
       "regime":         "trend_up",
-      "volatility":     "low",
       "momentum":       "bullish",
-      "trend_strength": "extreme",
-      "htf_bias":       "bull"
+      "setup_type":     "breakout",
+      "htf_bias":       "bull",
+      "trend_strength": "extreme"
+    }
+  }
+}
+
+Payload cierre (TradingView):
+{
+  "status": "pending",
+  "signal": {
+    "symbol":      "SOLUSDT",
+    "action":      "close_buy",
+    "signal_type": "close",
+    "size":        0.1,
+    "params": {
+      "price":        94.20,
+      "entry_price":  93.73,
+      "close_reason": "cross",
+      "pnl_pct":      0.50
     }
   }
 }
@@ -50,7 +70,7 @@ def _norm(value: str, valid: set, default: str) -> str:
 
 
 class QLearningWorker(StrategyWorker):
-    strategy_id = "qlearning"
+    strategy_id = "2"
 
     def encode_state(self, params: dict) -> str:
         """

@@ -35,11 +35,22 @@ class StrategyRegistry:
     @classmethod
     def initialize_all(cls):
         """Instantiate and register all available strategies."""
-        from strategies.apuesta.worker  import ApuestaWorker
+        from strategies.apuesta.worker   import ApuestaWorker
         from strategies.qlearning.worker import QLearningWorker
-        from strategies.tanque.worker   import TanqueWorker
+        from strategies.tanque.worker    import TanqueWorker
+        from strategies.e4.worker        import Strategy4Worker
+        from strategies.e5.worker        import Strategy5Worker
+        from strategies.e6.worker        import Strategy6Worker
+        from strategies.e7.worker        import Strategy7Worker
+        from strategies.e8.worker        import Strategy8Worker
+        from strategies.e9.worker        import Strategy9Worker
+        from strategies.e10.worker       import Strategy10Worker
 
-        for WorkerClass in [ApuestaWorker, QLearningWorker, TanqueWorker]:
+        for WorkerClass in [
+            ApuestaWorker, QLearningWorker, TanqueWorker,
+            Strategy4Worker, Strategy5Worker, Strategy6Worker,
+            Strategy7Worker, Strategy8Worker, Strategy9Worker, Strategy10Worker,
+        ]:
             try:
                 worker = WorkerClass()
                 cls.register(worker)

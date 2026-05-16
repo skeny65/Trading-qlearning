@@ -1,79 +1,98 @@
 """
-Estrategia APUESTA - Worker Q-Learning.
+Estrategia 1 (APUESTA) - Worker Q-Learning.
+Logica: TEMA 21/55 + DEMA 200 en 10 minutos (v019).
 
-Estado: price_zone | rr_level | hour_zone  (3x3x3 = 27 estados)
-    price_zone : high (>100) | mid (>50) | low (<=50)
-    rr_level   : excellent (>=1.5) | good (>=1.0) | poor (<1.0)
-    hour_zone  : us_hours (13-17 UTC) | asia_hours (0-2 / 8-9 UTC) | eu_hours (resto)
+Estado 3D: f1_level | f2_level | f3_level  (3x3x3 = 27 estados)
+    f1_level : wide (>=0.5%) | mid (>=0.2%) | tight (<0.2%)
+               Separacion porcentual entre TEMA21 y TEMA55.
+               Mide compresion del mercado: tight = rango lateral.
 
-Historico real: 183 trades, WR 54.9%, PF 1.22
-Filtros Pine: VWAP, ADX min 16, volumen, ATR
-R:R optimo: 1:1.5
+    f2_level : strong (>=0.5%) | mid (>=0.2%) | flat (<0.2%)
+               Angulo/pendiente de TEMA21 en 5 velas.
+               Mide inercia: flat = sin impulso suficiente.
 
-Payload esperado de TradingView:
+    f3_level : far (>=1.0%) | mid (>=0.3%) | near (<0.3%)
+               Distancia del precio a la DEMA200.
+               Mide riesgo de imán institucional: near = zona peligrosa.
+
+Flujo de 2 alertas por operacion:
+    Alerta 1 (signal_type: "open")  -> Q-Learning decide si ejecutar
+    Alerta 2 (signal_type: "close") -> cierre inmediato + update Q
+
+Payload apertura (TradingView):
 {
   "status": "pending",
   "signal": {
-    "symbol": "SOLUSD",
-    "action": "buy",
-    "confidence": 0.75,
-    "size": 0.1,
+    "symbol":      "SOLUSDT",
+    "action":      "buy",
+    "signal_type": "open",
+    "size":        0.1,
     "params": {
-      "price": 150.0,
-      "sl":    148.0,
-      "tp":    154.0,
-      "rr":    1.5,
-      "atr":   1.0
+      "price":        91.57,
+      "f1_sep":       0.627,
+      "f2_angle":     0.906,
+      "f3_d200":      1.701,
+      "anti_parallel":"libre",
+      "d200_trend":   "bajista",
+      "slope":        "up"
+    }
+  }
+}
+
+Payload cierre (TradingView):
+{
+  "status": "pending",
+  "signal": {
+    "symbol":      "SOLUSDT",
+    "action":      "close_buy",
+    "signal_type": "close",
+    "size":        0.1,
+    "params": {
+      "price":        91.30,
+      "entry_price":  91.57,
+      "close_reason": "cross",
+      "pnl_pct":      -0.29
     }
   }
 }
 """
-from datetime import datetime, timezone
 from core.strategy_worker import StrategyWorker
 
 
 class ApuestaWorker(StrategyWorker):
-    strategy_id = "apuesta"
+    strategy_id = "1"
 
     def encode_state(self, params: dict) -> str:
         """
-        Builds state: "{price_zone}|{rr_level}|{hour_zone}"
-        Falls back gracefully if fields are missing.
+        Estado 3D: f1_level|f2_level|f3_level
+        Basado en los filtros reales del Pine Script TEMA 21/55 + DEMA 200.
         """
-        price = float(params.get("price", 0.0))
-        sl    = float(params.get("sl",    0.0))
-        tp    = float(params.get("tp",    0.0))
-        rr    = float(params.get("rr",    0.0))
+        f1 = float(params.get("f1_sep",   0.0))
+        f2 = float(params.get("f2_angle", 0.0))
+        f3 = float(params.get("f3_d200",  0.0))
 
-        # Compute RR from sl/tp if rr not explicit
-        if rr == 0.0 and sl != 0.0 and tp != 0.0 and price != 0.0:
-            risk   = abs(price - sl)
-            reward = abs(tp - price)
-            rr     = round(reward / risk, 2) if risk > 0 else 0.0
-
-        # price_zone
-        if price > 100:
-            price_zone = "high"
-        elif price > 50:
-            price_zone = "mid"
+        # F1: separacion TEMA21 vs TEMA55
+        if f1 >= 0.5:
+            f1_level = "wide"
+        elif f1 >= 0.2:
+            f1_level = "mid"
         else:
-            price_zone = "low"
+            f1_level = "tight"
 
-        # rr_level
-        if rr >= 1.5:
-            rr_level = "excellent"
-        elif rr >= 1.0:
-            rr_level = "good"
+        # F2: angulo/pendiente TEMA21
+        if f2 >= 0.5:
+            f2_level = "strong"
+        elif f2 >= 0.2:
+            f2_level = "mid"
         else:
-            rr_level = "poor"
+            f2_level = "flat"
 
-        # hour_zone (UTC)
-        hour = datetime.now(timezone.utc).hour
-        if hour in (13, 14, 15, 16, 17):
-            hour_zone = "us_hours"
-        elif hour in (0, 1, 2, 8, 9):
-            hour_zone = "asia_hours"
+        # F3: distancia precio a DEMA200
+        if f3 >= 1.0:
+            f3_level = "far"
+        elif f3 >= 0.3:
+            f3_level = "mid"
         else:
-            hour_zone = "eu_hours"
+            f3_level = "near"
 
-        return f"{price_zone}|{rr_level}|{hour_zone}"
+        return f"{f1_level}|{f2_level}|{f3_level}"

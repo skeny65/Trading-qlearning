@@ -1,131 +1,151 @@
 # Flujo End-to-End - bot3 Multi-Strategy
 
-## Flujo completo: TradingView -> Q-Learning -> bot1 -> aprendizaje automatico
+Hay dos flujos de operacion segun la estrategia:
+
+| Estrategias | Flujo de cierre               | Aprendizaje Q         |
+|-------------|-------------------------------|-----------------------|
+| 1 y 2       | 2 alertas (open + close)      | Inmediato al recibir close |
+| 3 a 10      | 1 alerta + Price Poller       | Cuando Binance detecta TP/SL |
+
+---
+
+## Flujo A: Estrategias 1 y 2 — 2 alertas por operacion
+
+### Alerta 1: APERTURA
 
 ```
 +-------------------+
 |   TradingView     |
-|   .pine alert     |
+|   signal_type:    |
+|   "open"          |
 +--------+----------+
          |
-         |  POST http://<ngrok>/webhook/strategy/qlearning
-         |  Header: X-Webhook-Secret: <TV_WEBHOOK_SECRET>
-         |  Body: JSON con symbol, action, price, sl, tp, params...
+         |  POST /webhook/strategy/1  (o /2)
+         |  Body: {signal_type:"open", action:"buy", params:{f1,f2,f3,...}}
          v
 +-----------------------------------------------------------+
 |              bot3.py -- localhost:8001                    |
 |                                                           |
-|  1. Verificar X-Webhook-Secret (401 si falla)             |
-|  2. Verificar IP si TV_ENFORCE_IP=true (403 si falla)     |
-|  3. Si status != "pending" -> 200 silente                 |
-|                                                           |
-|  4. StrategyRegistry.get("qlearning") -> QLearningWorker  |
-|                                                           |
-|  5. worker.decide(body):                                  |
-|     encode_state(params) -> "trend_up|bullish|breakout|   |
-|                               bull|extreme"               |
+|  1. Verificar secret                                      |
+|  2. Detecta signal_type="open" -> flujo Q-Learning        |
+|  3. worker.decide(body):                                  |
+|     Estrategia 1: encode_state -> f1_level|f2_level|f3_level|
+|     Estrategia 2: encode_state -> regime|momentum|setup|htf|strength|
 |     agent.choose_action(state) [epsilon-greedy]           |
 |     -> EXECUTE_FULL / EXECUTE_HALF / SKIP / INVERT        |
 |                                                           |
-|  6. Escribe fila en Excel:                                |
-|     logs/qlearning/trade_log.xlsx                         |
-|     [result=VACIO | pnl_notes=VACIO | learned_at=VACIO]   |
-|                                                           |
-|  7. Si execute=True:                                      |
-|     webhook_client.send() -> POST /webhook/bot3           |
-|     pending_q_decisions[order_id] = {                     |
-|       strategy_id, state, action,                         |
-|       entry_price, sl, tp, symbol, side, open_time        |
-|     }                                                     |
-|     (se registra aunque bot1 este caido)                  |
-+----------------------------+------------------------------+
-                             |
-                             | POST localhost:8000/webhook/bot3
-                             v
+|  4. Escribe fila en Excel (result=VACIO todavia)          |
+|  5. Si ejecuta:                                           |
+|     -> Envia a bot1 en background                         |
+|     -> open_positions[(id, symbol)] = {state, action}     |
+|     -> pending_q_decisions[order_id] = {state, action...} |
 +-----------------------------------------------------------+
-|   bot1.py -- localhost:8000  (opcional / independiente)   |
-|   Ejecuta en Alpaca si esta disponible                    |
+```
+
+### Alerta 2: CIERRE
+
+```
++-------------------+
+|   TradingView     |
+|   signal_type:    |
+|   "close"         |
++--------+----------+
+         |
+         |  POST /webhook/strategy/1  (o /2)
+         |  Body: {signal_type:"close", action:"close_buy",
+         |         params:{price, entry_price, pnl_pct, close_reason}}
+         v
++-----------------------------------------------------------+
+|              bot3.py -- localhost:8001                    |
+|                                                           |
+|  1. Detecta signal_type="close" -> bypass Q-Learning      |
+|  2. Recupera open_positions[(id, symbol)]                 |
+|     -> state y action de cuando se abrio                  |
+|  3. Envia orden de cierre a bot1 (background)             |
+|  4. _send_close_to_bot1():                                |
+|     - compute_reward(pnl_pct, duration_min)               |
+|     - worker.update_q(state, action, reward) INMEDIATO    |
+|       -> Bellman: Q(s,a) += alpha*[r + gamma*maxQ' - Q(s,a)]|
+|       -> agent.decay_params() -> epsilon y alpha decaen   |
+|       -> INSIGHTS.md regenerado                           |
+|     - update_excel_result(order_id, WIN/LOSS) INMEDIATO   |
+|       -> pnl_notes = "+0.50% | CROSS | 32min"             |
+|     - Elimina de open_positions y pending_q_decisions     |
 +-----------------------------------------------------------+
 ```
 
 ---
 
-## Flujo de aprendizaje automatico (Price Poller)
-
-El Price Poller corre en segundo plano cada **60 segundos**, completamente
-independiente. No requiere bot1 ni intervencion humana.
+## Flujo B: Estrategias 3-10 — 1 alerta + Price Poller
 
 ```
++-------------------+
+|   TradingView     |
+|   (1 alerta)      |
++--------+----------+
+         |
+         |  POST /webhook/strategy/3  (o /4 ... /10)
+         |  Body: {action:"buy", params:{price, sl, tp, ...}}
+         v
++-----------------------------------------------------------+
+|              bot3.py -- localhost:8001                    |
+|                                                           |
+|  1. Detecta signal_type ausente o "open" -> flujo Q       |
+|  2. worker.decide(body) -> EXECUTE / SKIP / ...           |
+|  3. Si ejecuta:                                           |
+|     -> Envia a bot1                                       |
+|     -> pending_q_decisions[order_id] = {                  |
+|         state, action, entry_price, sl, tp, open_time     |
+|       }                                                   |
++-----------------------------------------------------------+
+                         |
+                         v
 +-----------------------------------------------------------+
 |  manager/price_poller.py  (hilo daemon, cada 60s)         |
 |                                                           |
-|  Para cada pending_q_decisions con entry_price+sl+tp:     |
+|  GET https://api.binance.com/api/v3/ticker/price          |
+|  Sin API key                                              |
 |                                                           |
-|    GET https://api.binance.com/api/v3/ticker/price        |
-|        ?symbol=SOLUSDT                                    |
-|    -> precio actual en tiempo real                        |
-|                                                           |
-|    Evaluar:                                               |
-|      BUY:  precio >= tp -> TP_HIT (resultado WIN)         |
-|            precio <= sl -> SL_HIT (resultado LOSS)        |
-|      SELL: precio <= tp -> TP_HIT (resultado WIN)         |
-|            precio >= sl -> SL_HIT (resultado LOSS)        |
-|      > 24h sin cierre   -> EXPIRED (resultado LOSS)       |
+|  Para cada pending con sl + tp:                           |
+|    BUY:  precio >= tp -> WIN  |  precio <= sl -> LOSS     |
+|    SELL: precio <= tp -> WIN  |  precio >= sl -> LOSS     |
+|    > 24h sin cierre   -> EXPIRED (LOSS)                   |
 |                                                           |
 |  Al detectar cierre -> _close_position():                 |
-|                                                           |
-|    1. Calcular pnl_pct y R-multiple                       |
-|    2. worker.update_q(state, action, reward, next_state)  |
-|       Bellman: Q(s,a) += alpha*[r + gamma*maxQ' - Q(s,a)] |
-|       agent.decay_params() -> epsilon y alpha decaen      |
-|       trainer.append_experience() -> replay_buffer.jsonl  |
-|       trainer.save_and_backup() -> q_table.json           |
-|       journal.record_update() -> learning_journal.jsonl   |
-|                              -> INSIGHTS.md (regenerado)  |
-|                                                           |
-|    3. update_excel_result(order_id, result, pnl_notes)    |
-|       Abre logs/{id}/trade_log.xlsx                       |
-|       Busca la fila por order_id                          |
-|       Escribe automaticamente:                            |
-|         result    = "WIN" o "LOSS"                        |
-|         pnl_notes = "+2.34% | TP_HIT | 47min | R=2.34x"  |
-|         learned_at = timestamp UTC                        |
-|       Guarda Excel                                        |
+|    1. worker.update_q(state, action, reward, next_state)  |
+|    2. update_excel_result(order_id, WIN/LOSS, pnl_notes)  |
+|       pnl_notes = "+2.34% | TP_HIT | 47min | R=2.34x"    |
 +-----------------------------------------------------------+
 ```
 
 ---
 
-## Resultado final en Excel (automatico)
+## Resultado en Excel (automatico en ambos flujos)
 
-Despues de que el Price Poller detecta el cierre, el Excel se ve asi:
+| timestamp_utc        | symbol  | ql_action    | ql_state          | execute | result   | pnl_notes                      | learned_at           |
+|----------------------|---------|--------------|-------------------|---------|----------|--------------------------------|----------------------|
+| 2026-05-16T07:20:00Z | SOLUSDT | EXECUTE_FULL | wide\|strong\|far  | True    | **LOSS** | **-0.29% \| CROSS \| 32min**  | 2026-05-16T07:52:00Z |
+| 2026-05-16T13:00:00Z | SOLUSDT | EXECUTE_FULL | wide\|strong\|mid  | True    | **WIN**  | **+1.45% \| TP_HIT \| 47min** | 2026-05-16T13:47:00Z |
 
-| timestamp_utc | symbol | ql_action | ql_state | execute | result | pnl_notes | learned_at |
-|---|---|---|---|---|---|---|---|
-| 2026-05-09T14:23:00Z | SOLUSDT | EXECUTE_FULL | trend_up\|bullish\|... | True | **WIN** | **+1.45% \| TP_HIT \| 47min \| R=2.34x** | 2026-05-09T15:10:00Z |
-| 2026-05-09T09:11:00Z | SOLUSDT | EXECUTE_FULL | range\|bearish\|... | True | **LOSS** | **-1.10% \| SL_HIT \| 22min \| R=-1.10x** | 2026-05-09T09:33:00Z |
-
-**El Excel se llena solo. No necesitas hacer nada.**
+**El Excel se llena automaticamente. No necesitas hacer nada.**
 
 ---
 
-## Flujo de revision manual en Excel (opcional / sin bot1)
+## Flujo de revision manual en Excel (siempre disponible)
 
-Si quieres revisar o corregir resultados manualmente:
+Si necesitas corregir un resultado o aprender de un trade que el bot no capturo:
 
 ```
 1. Abre logs/{id}/trade_log.xlsx
-2. En columna 'result': escribe WIN o LOSS en las filas que quieras corregir
-3. Opcional: escribe notas en 'pnl_notes'
-4. Guarda el Excel
-5. Corre: python scripts/learn_from_excel.py
+2. En columna 'result': escribe WIN o LOSS en la fila que quieras
+3. Guarda el Excel
+4. Corre: python scripts/learn_from_excel.py
    -> Lee filas con WIN/LOSS y learned_at vacio
    -> Llama POST /api/strategy/{id}/update por cada una
    -> El agente aprende y regenera INSIGHTS.md
    -> Marca learned_at en Excel (no reprocesa)
 ```
 
-**Comandos del script:**
 ```powershell
 # Ver que se procesaria sin hacer nada
 python scripts/learn_from_excel.py --dry-run
@@ -134,52 +154,31 @@ python scripts/learn_from_excel.py --dry-run
 python scripts/learn_from_excel.py
 
 # Solo una estrategia
-python scripts/learn_from_excel.py qlearning
+python scripts/learn_from_excel.py 1
+python scripts/learn_from_excel.py 2
 ```
 
 ---
 
-## Aprendizaje via API (avanzado)
+## INSIGHTS.md - Lo que aprende el agente (estrategia 1 como ejemplo)
 
-Forzar aprendizaje directamente con state y action:
-
-```powershell
-$headers = @{ "Content-Type" = "application/json" }
-$body = @{
-    order_id      = "20260509_142300123456"
-    pnl_pct       = 1.45
-    duration_min  = 47.0
-    r_multiple    = 2.34
-    state         = "trend_up|bullish|breakout|bull|extreme"
-    action        = "EXECUTE_FULL"
-} | ConvertTo-Json
-
-Invoke-WebRequest -Uri http://localhost:8001/api/strategy/qlearning/update `
-    -Method POST -Headers $headers -Body $body
-```
-
----
-
-## INSIGHTS.md - Lo que aprende el agente
-
-Despues de suficientes trades, `logs/qlearning/INSIGHTS.md` muestra automaticamente:
+Despues de suficientes trades, `logs/1/INSIGHTS.md` muestra automaticamente:
 
 ```
 ## Contextos RENTABLES
 
-| Estado                                 | Accion       | Q-value |
-|----------------------------------------|--------------|---------|
-| trend_up|bullish|breakout|bull|extreme | EXECUTE_FULL | +0.3842 |
+| Estado              | Accion       | Q-value |
+|---------------------|--------------|---------|
+| wide|strong|far     | EXECUTE_FULL | +0.3842 |
+| wide|mid|far        | EXECUTE_FULL | +0.2100 |
 
-Sugerencia para TradingView:
-Prioriza alertas en: trend_up + bullish + breakout + bull + extreme.
+Sugerencia: Prioriza señales cuando f1>=0.5%, f2>=0.2%, precio lejos de DEMA200.
 
 ## Contextos BLOQUEADOS
 
-| Estado                           | Accion evitada | Q-value |
-|----------------------------------|----------------|---------|
-| range|bearish|pullback|bear|weak | EXECUTE_FULL   | -0.4200 |
+| Estado              | Accion evitada | Q-value |
+|---------------------|----------------|---------|
+| tight|flat|near     | EXECUTE_FULL   | -0.4200 |
 
-Filtros sugeridos para Pine Script:
-- Evitar entradas cuando: range + bearish + pullback + bear + weak
+Filtros sugeridos: Evitar entradas cuando f1<0.2%, f2<0.2%, precio cerca DEMA200.
 ```

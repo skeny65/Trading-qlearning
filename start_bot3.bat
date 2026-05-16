@@ -46,7 +46,7 @@ echo   DRY_RUN    : %DRY_RUN%
 echo   Q-Learning : %QLEARNING_ENABLED%
 echo   Bot1 URL   : %BOT1_WEBHOOK_URL%
 echo.
-echo   Estrategias: apuesta ^| qlearning ^| tanque
+echo   Estrategias: 1 ^| 2 ^| 3 ^| 4 ^| 5 ^| 6 ^| 7 ^| 8 ^| 9 ^| 10
 echo.
 echo   Endpoints utiles:
 echo     POST  http://localhost:%PORT%/webhook/strategy/{id}

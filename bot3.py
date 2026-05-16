@@ -38,7 +38,7 @@ from core.reward_calculator    import compute_reward
 from core.tv_signal_parser     import parse_tv_envelope
 from core.strategy_registry    import StrategyRegistry
 from manager.price_poller      import PricePoller
-from utils.excel_logger        import append_excel_rows
+from utils.excel_logger        import append_excel_rows, update_excel_result
 from manager.qlearning_trainer import QLearningTrainer
 from sender                    import webhook_client, signal_formatter, telegram_notifier
 from strategies.strategy_tv_qlearning import TVQLearningStrategy
@@ -55,6 +55,8 @@ strategy: Optional[TVQLearningStrategy] = None
 # {order_id: {state, action, timestamp, ticker, original_side, executed_side,
 #              strategy_id, symbol, side, entry_price, sl, tp, open_time}}
 pending_q_decisions: dict = {}
+# {(strategy_id, symbol): {state, action, order_id, open_time}} - para asociar cierres con aperturas
+open_positions: dict = {}
 poller: Optional[PricePoller] = None
 
 # -- helpers de persistencia ---------------------------------------------------
@@ -244,15 +246,16 @@ def _build_excel_row_strategy(
 async def lifespan(app: FastAPI):
     global agent, trainer, strategy, poller
 
-    # Crear directorios necesarios
-    for d in (
-        "logs", "state", "data/qlearning",
-        "data/strategies/apuesta", "data/strategies/qlearning", "data/strategies/tanque",
-        # logs separados por estrategia
-        "logs/apuesta/events", "logs/qlearning/events", "logs/tanque/events",
-        # decision logs separados por estrategia
-        "state/apuesta", "state/qlearning", "state/tanque",
-    ):
+    # Crear directorios necesarios — una carpeta por estrategia (1-10)
+    _STRATEGY_IDS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]
+    dirs = ["logs", "state"]
+    for sid in _STRATEGY_IDS:
+        dirs += [
+            f"data/strategies/{sid}",
+            f"logs/{sid}/events",
+            f"state/{sid}",
+        ]
+    for d in dirs:
         Path(d).mkdir(parents=True, exist_ok=True)
 
     logger.info(
@@ -646,11 +649,12 @@ def _send_strategy_to_bot1(
     # Rastrear en pending_q_decisions siempre que el bot haya decidido ejecutar.
     # Si bot1 esta caido (failed), seguimos monitoreando via Price Poller y
     # el usuario puede revisar el resultado en Excel con learn_from_excel.py.
-    params = decision.get("params", {})
+    params    = decision.get("params", {})
+    open_time = datetime.now(timezone.utc).isoformat()
     pending_q_decisions[order_id] = {
         "state":         state,
         "action":        ql_action,
-        "timestamp":     datetime.now(timezone.utc).isoformat(),
+        "timestamp":     open_time,
         "ticker":        ticker,
         "original_side": decision["original_action"],
         "executed_side": side,
@@ -661,8 +665,16 @@ def _send_strategy_to_bot1(
         "entry_price":   float(params.get("price", 0.0)),
         "sl":            float(params.get("sl",    0.0)),
         "tp":            float(params.get("tp",    0.0)),
-        "open_time":     datetime.now(timezone.utc).isoformat(),
+        "open_time":     open_time,
         "bot1_status":   webhook_status,
+    }
+    # Indice secundario para asociar señales de cierre de TradingView con esta apertura
+    open_positions[(strategy_id, ticker)] = {
+        "order_id":    order_id,
+        "state":       state,
+        "action":      ql_action,
+        "open_time":   open_time,
+        "entry_price": float(params.get("price", 0.0)),
     }
 
     log_entry = {
@@ -687,6 +699,76 @@ def _send_strategy_to_bot1(
     )
     _write_event_report(log_entry, strategy_id=strategy_id)
     worker.trainer.save_and_backup()
+
+
+def _send_close_to_bot1(
+    close_payload: dict,
+    event_id:      str,
+    strategy_id:   str,
+    symbol:        str,
+    open_pos:      dict,
+    pnl_pct:       float,
+    close_price:   float,
+    close_reason:  str,
+    worker,
+):
+    """Background task: envia cierre a bot1, actualiza Q-table y Excel inmediatamente."""
+    wh_response    = webhook_client.send(close_payload)
+    webhook_status = wh_response.get("status", "unknown")
+
+    logger.info(
+        f"[{strategy_id}|{symbol}] CLOSE enviado a bot1: status={webhook_status} "
+        f"pnl={pnl_pct:+.2f}% reason={close_reason}"
+    )
+
+    # Calcular duracion desde apertura
+    try:
+        open_dt      = datetime.fromisoformat(open_pos["open_time"].replace("Z", "+00:00"))
+        duration_min = (datetime.now(timezone.utc) - open_dt).total_seconds() / 60
+    except Exception:
+        duration_min = 0.0
+
+    # Calcular recompensa y actualizar Q-table inmediatamente
+    reward = compute_reward({
+        "pnl_pct":             pnl_pct,
+        "duration_min":        duration_min,
+        "account_drawdown_pct": 0.0,
+        "r_multiple":          0.0,
+    })
+
+    new_q = worker.update_q(
+        state      = open_pos["state"],
+        action     = open_pos["action"],
+        reward     = reward,
+        next_state = "closed",
+        trade_meta = {
+            "close_reason": close_reason,
+            "pnl_pct":      pnl_pct,
+            "symbol":       symbol,
+            "duration_min": duration_min,
+        },
+    )
+
+    # Rellenar Excel con resultado final
+    resultado = "WIN" if pnl_pct > 0 else "LOSS"
+    pnl_notes = f"{pnl_pct:+.2f}% | {close_reason.upper()} | {duration_min:.0f}min"
+    update_excel_result(
+        order_id    = open_pos["order_id"],
+        result      = resultado,
+        strategy_id = strategy_id,
+        pnl_notes   = pnl_notes,
+    )
+
+    # Limpiar de pending_q_decisions (ya aprendimos)
+    pending_q_decisions.pop(open_pos["order_id"], None)
+
+    logger.info(
+        f"[{strategy_id}|{symbol}] Q actualizado: {resultado} "
+        f"reward={reward:.4f} new_q={new_q:.4f} eps={worker.agent.epsilon:.4f}"
+    )
+    telegram_notifier.signal_sent(
+        symbol, "close", 0, f"{resultado} {pnl_pct:+.2f}%", open_pos["state"], False
+    )
 
 
 @app.post("/webhook/strategy/{strategy_id}")
@@ -729,6 +811,79 @@ async def webhook_strategy(
             "detail":    f"status={body.get('status')} - sin accion",
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
+
+    # -- Routing por signal_type -------------------------------------------------
+    signal_body = body.get("signal", {})
+    signal_type = str(signal_body.get("signal_type", "open")).lower()
+
+    if signal_type == "close":
+        # Señal de cierre: bypass Q-Learning, cerrar posicion inmediatamente
+        params_close  = signal_body.get("params", {})
+        symbol_close  = str(signal_body.get("symbol", "UNKNOWN")).upper()
+        action_close  = str(signal_body.get("action", "close_buy")).lower()
+        close_price   = float(params_close.get("price",       0.0))
+        entry_price   = float(params_close.get("entry_price", 0.0))
+        pnl_pct_close = float(params_close.get("pnl_pct",     0.0))
+        close_reason  = str(params_close.get("close_reason",  "cross"))
+        close_size    = float(signal_body.get("size", 0.1))
+        event_id_c    = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S%f")
+
+        # Si pnl_pct no vino en el payload, calcularlo de entry_price vs close_price
+        if pnl_pct_close == 0.0 and entry_price != 0.0:
+            pnl_pct_close = round((close_price - entry_price) / entry_price * 100, 4)
+            if "sell" in action_close:
+                pnl_pct_close = -pnl_pct_close
+
+        # Recuperar apertura asociada
+        open_pos = open_positions.pop((strategy_id, symbol_close), None)
+
+        logger.info(
+            f"[{strategy_id}|{symbol_close}] CLOSE recibido: {action_close} "
+            f"price={close_price} pnl={pnl_pct_close:+.2f}% reason={close_reason} "
+            f"open_found={open_pos is not None}"
+        )
+
+        if open_pos:
+            close_side = "sell" if "buy" in action_close else "buy"
+            close_payload = signal_formatter.build_payload(
+                symbol      = symbol_close,
+                action      = close_side,
+                confidence  = 1.0,
+                size        = close_size,
+                ql_action   = "CLOSE",
+                ql_state    = open_pos["state"],
+                q_value     = 0.0,
+                regime      = "", volatility = "", momentum = "",
+                price       = close_price, sl = 0.0, tp = 0.0, atr = 0.0,
+                strategy_id = f"bot3_{strategy_id}",
+                extra_params= {"close_reason": close_reason},
+            )
+            background_tasks.add_task(
+                _send_close_to_bot1,
+                close_payload, event_id_c, strategy_id, symbol_close,
+                open_pos, pnl_pct_close, close_price, close_reason, worker,
+            )
+            close_status = "close_queued"
+        else:
+            # No habia apertura rastreada (bot reiniciado o señal de apertura no ejecutada)
+            logger.warning(
+                f"[{strategy_id}|{symbol_close}] CLOSE sin apertura rastreada - "
+                f"actualizando Q manualmente si pnl_pct disponible"
+            )
+            close_status = "close_no_open_tracked"
+
+        return {
+            "strategy":    strategy_id,
+            "symbol":      symbol_close,
+            "signal_type": "close",
+            "action":      action_close,
+            "close_reason": close_reason,
+            "pnl_pct":     pnl_pct_close,
+            "open_found":  open_pos is not None,
+            "status":      close_status,
+            "timestamp":   datetime.now(timezone.utc).isoformat(),
+        }
+    # ---------------------------------------------------------------------------
 
     try:
         decision = worker.decide(body)

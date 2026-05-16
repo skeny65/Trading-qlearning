@@ -1,11 +1,11 @@
 # Instrucciones de Setup - bot3 Multi-Strategy
 
-## Estado actual (2026-05-09)
+## Estado actual (2026-05-16)
 
-Sistema completamente operativo:
-- 3 estrategias independientes: `apuesta`, `qlearning`, `tanque`
-- Price Poller: detecta TP/SL cada 60s via Binance API publica
-- Excel por estrategia: se llena automaticamente con WIN/LOSS
+Sistema operativo con 10 estrategias independientes:
+- **Estrategias 1 y 2:** flujo de 2 alertas (open + close desde TradingView)
+- **Estrategias 3-10:** flujo de 1 alerta + Price Poller (detecta TP/SL via Binance)
+- Excel por estrategia llenado automaticamente con WIN/LOSS
 - bot1 es opcional: el bot aprende con o sin el
 
 ---
@@ -57,86 +57,135 @@ TELEGRAM_CHAT_ID=
 
 ---
 
+## URLs de TradingView (produccion)
+
+```
+Estrategia 1 (apertura):  https://shaft-goliath-shakable.ngrok-free.dev/webhook/strategy/1?secret=mi_secreto_webhook_123
+Estrategia 1 (cierre):    https://shaft-goliath-shakable.ngrok-free.dev/webhook/strategy/1?secret=mi_secreto_webhook_123
+Estrategia 2 (apertura):  https://shaft-goliath-shakable.ngrok-free.dev/webhook/strategy/2?secret=mi_secreto_webhook_123
+Estrategia 2 (cierre):    https://shaft-goliath-shakable.ngrok-free.dev/webhook/strategy/2?secret=mi_secreto_webhook_123
+Estrategia 3:             https://shaft-goliath-shakable.ngrok-free.dev/webhook/strategy/3?secret=mi_secreto_webhook_123
+Estrategias 4-10:         https://shaft-goliath-shakable.ngrok-free.dev/webhook/strategy/{id}?secret=mi_secreto_webhook_123
+```
+
+La misma URL sirve tanto para open como para close — el campo `signal_type` en el body es lo que distingue el tipo de alerta.
+
+---
+
 ## Verificar que todo funciona
 
 ```powershell
 # 1. Health check
 Invoke-WebRequest http://localhost:8001/health | Select-Object -ExpandProperty Content
 
-# 2. Listar estrategias
+# 2. Listar las 10 estrategias
 Invoke-WebRequest http://localhost:8001/api/strategies | Select-Object -ExpandProperty Content
 
-# 3. Test de senal manual (qlearning)
-$headers = @{ "Content-Type" = "application/json"; "X-Webhook-Secret" = "mi_secreto_webhook_123" }
+# 3. Test apertura estrategia 1
+$headers = @{ "Content-Type" = "application/json" }
 $body = @{
-    status = "pending"; source = "tradingview"
+    status = "pending"
     signal = @{
-        symbol = "SOLUSDT"; action = "buy"; confidence = 0.7; size = 0.1
-        params = @{
-            price = 93.73; sl = 93.63; tp = 93.93; atr = 0.066; adx = 40.66
-            regime = "trend_up"; momentum = "bullish"; setup_type = "breakout"
-            htf_bias = "bull"; trend_strength = "extreme"
+        symbol      = "SOLUSDT"
+        action      = "buy"
+        signal_type = "open"
+        size        = 0.1
+        params      = @{
+            price      = 91.57
+            f1_sep     = 0.627
+            f2_angle   = 0.906
+            f3_d200    = 1.701
+            d200_trend = "bajista"
+            slope      = "up"
         }
     }
 } | ConvertTo-Json -Depth 5
 
-Invoke-WebRequest -Uri http://localhost:8001/webhook/strategy/qlearning `
+Invoke-WebRequest -Uri "http://localhost:8001/webhook/strategy/1?secret=mi_secreto_webhook_123" `
+    -Method POST -Headers $headers -Body $body
+
+# 4. Test cierre estrategia 1
+$body = @{
+    status = "pending"
+    signal = @{
+        symbol      = "SOLUSDT"
+        action      = "close_buy"
+        signal_type = "close"
+        size        = 0.1
+        params      = @{
+            price        = 91.30
+            entry_price  = 91.57
+            close_reason = "cross"
+            pnl_pct      = -0.29
+        }
+    }
+} | ConvertTo-Json -Depth 5
+
+Invoke-WebRequest -Uri "http://localhost:8001/webhook/strategy/1?secret=mi_secreto_webhook_123" `
+    -Method POST -Headers $headers -Body $body
+
+# 5. Test apertura estrategia 2
+$body = @{
+    status = "pending"
+    signal = @{
+        symbol      = "SOLUSDT"
+        action      = "buy"
+        signal_type = "open"
+        size        = 0.1
+        params      = @{
+            price          = 93.73
+            sl             = 93.63
+            tp             = 93.93
+            regime         = "trend_up"
+            momentum       = "bullish"
+            setup_type     = "breakout"
+            htf_bias       = "bull"
+            trend_strength = "extreme"
+        }
+    }
+} | ConvertTo-Json -Depth 5
+
+Invoke-WebRequest -Uri "http://localhost:8001/webhook/strategy/2?secret=mi_secreto_webhook_123" `
     -Method POST -Headers $headers -Body $body
 ```
-
-Respuesta esperada:
-```json
-{"strategy": "qlearning", "status": "queued", "ql_action": "EXECUTE_FULL", ...}
-```
-
----
-
-## Configurar TradingView
-
-En cada alerta de Pine Script:
-
-- **URL Apuesta:** `https://<ngrok>.ngrok-free.app/webhook/strategy/apuesta`
-- **URL QLearning:** `https://<ngrok>.ngrok-free.app/webhook/strategy/qlearning`
-- **URL Tanque:** `https://<ngrok>.ngrok-free.app/webhook/strategy/tanque`
-- **Header:** `X-Webhook-Secret: <TV_WEBHOOK_SECRET>`
-- **Body:** JSON con el formato de `docs/webhook_format.md`
-
-Para que el aprendizaje sea automatico, el body DEBE incluir `sl` y `tp` en `params`.
 
 ---
 
 ## Ver resultados
 
 ```powershell
-# Excel de cada estrategia (llenado automaticamente con WIN/LOSS)
-# Abrir con doble clic:
-logs\qlearning\trade_log.xlsx
-logs\apuesta\trade_log.xlsx
-logs\tanque\trade_log.xlsx
+# Excel de cada estrategia (llenado automaticamente)
+logs\1\trade_log.xlsx   <- estrategia 1 (Apuesta / TEMA 21-55)
+logs\2\trade_log.xlsx   <- estrategia 2 (QLearning 5D)
+logs\3\trade_log.xlsx   <- estrategia 3 (Tanque)
+# etc.
 
 # Diario de aprendizaje (actualizado tras cada trade cerrado)
-Get-Content logs\qlearning\INSIGHTS.md
+Get-Content logs\1\INSIGHTS.md
+Get-Content logs\2\INSIGHTS.md
 
 # Via API
-Invoke-WebRequest http://localhost:8001/api/strategy/qlearning/journal | Select-Object -ExpandProperty Content
+Invoke-WebRequest http://localhost:8001/api/strategy/1/journal | Select-Object -ExpandProperty Content
+Invoke-WebRequest http://localhost:8001/api/strategy/2/journal | Select-Object -ExpandProperty Content
 ```
 
 ---
 
-## Aprendizaje manual (si quieres corregir resultados)
+## Aprendizaje manual (si necesitas corregir resultados)
 
 ```powershell
-# Ver que se procesaria
+# Ver que se procesaria sin hacer nada
 python scripts/learn_from_excel.py --dry-run
 
 # Procesar todas las estrategias
 python scripts/learn_from_excel.py
 
-# Solo una
-python scripts/learn_from_excel.py qlearning
+# Solo una estrategia
+python scripts/learn_from_excel.py 1
+python scripts/learn_from_excel.py 2
 ```
 
-El script lee las columnas `result` (WIN/LOSS) del Excel y dispara el aprendizaje
+El script lee columna `result` (WIN/LOSS) del Excel y dispara aprendizaje
 para las filas que aun no tienen `learned_at`.
 
 ---
@@ -147,15 +196,15 @@ para las filas que aun no tienen `learned_at`.
 # Reiniciar bot3 (start_bot3.bat lo hace automaticamente)
 taskkill /f /im python.exe
 
-# Restaurar Q-Table desde backup
-Copy-Item "data\strategies\qlearning\backups\q_table_20260509_060000.json" `
-          "data\strategies\qlearning\q_table.json"
+# Restaurar Q-Table de estrategia 1 desde backup
+Copy-Item "data\strategies\1\backups\q_table_20260516_060000.json" `
+          "data\strategies\1\q_table.json"
 
-# Resetear Q-Table de una estrategia
-'{}' | Out-File data\strategies\qlearning\q_table.json -Encoding utf8
+# Resetear Q-Table de una estrategia (empieza desde cero)
+'{}' | Out-File data\strategies\1\q_table.json -Encoding utf8
 
 # Borrar Excel para empezar de cero (bot lo recrea automaticamente)
-Remove-Item logs\qlearning\trade_log.xlsx
+Remove-Item logs\1\trade_log.xlsx
 ```
 
 ---
@@ -170,6 +219,6 @@ BOT3_ALLOWED_HOSTS=127.0.0.1,::1,localhost
 ```
 
 **`core/bot_registry.py` de bot1:**
-- Agregar `"bot3_qlearning"` a `KNOWN_BOTS`
+- Agregar `"bot3_1"`, `"bot3_2"`, ..., `"bot3_10"` a `KNOWN_BOTS`
 
 Ver `docs/integration_bot1.md` para los detalles.
