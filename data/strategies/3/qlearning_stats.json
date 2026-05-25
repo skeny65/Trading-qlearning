@@ -1,0 +1,8 @@
+{
+  "alpha": 0.1,
+  "epsilon": 0.2,
+  "gamma": 0.9,
+  "paused": false,
+  "baseline_wr": null,
+  "last_updated": "2026-05-18T20:30:04.669810"
+}

@@ -1,21 +1,23 @@
 # Instrucciones de Setup - bot3 Multi-Strategy
 
-## Estado actual (2026-05-16)
+## Estado actual (2026-05-18)
 
 Sistema operativo con 10 estrategias independientes:
-- **Estrategias 1 y 2:** flujo de 2 alertas (open + close desde TradingView)
-- **Estrategias 3-10:** flujo de 1 alerta + Price Poller (detecta TP/SL via Binance)
-- Excel por estrategia llenado automaticamente con WIN/LOSS
-- bot1 es opcional: el bot aprende con o sin el
+- **Estrategias 1 y 4:** LIVE — ejecutan ordenes reales en Binance Futures (flujo 2 alertas)
+- **Estrategias 2 y 3:** LEARN ONLY — reciben senales y aprenden sin ejecutar en Binance (flujo 2 alertas)
+- **Estrategias 5-10:** LIVE — 1 alerta + Price Poller detecta TP/SL via Binance cada 60s
+- Excel por estrategia llenado automaticamente con WIN/LOSS y pnl_pct al cierre
+- Ejecucion directa en Binance Futures (sin intermediarios)
 
 ---
 
 ## Requisitos
 
 - Python 3.10+
-- Acceso a internet (Price Poller usa Binance API publica, sin key)
+- Cuenta Binance con permisos de Futuros habilitados
+- API Key de Binance con permisos de Futuros
 - Archivo `.env` configurado
-- bot1 opcional (si quieres ejecutar en Alpaca)
+- ngrok (para recibir webhooks de TradingView)
 
 ---
 
@@ -29,7 +31,7 @@ start_bot3.bat
 El bat hace todo automaticamente:
 1. Verifica Python
 2. Instala dependencias (`pip install -r requirements.txt`)
-3. Verifica bot1 (aviso si no esta, no bloquea)
+3. Verifica conectividad con Binance API
 4. Abre ngrok en ventana separada
 5. Arranca uvicorn en puerto 8001
 6. Auto-restart si cae (loop 24/7)
@@ -39,36 +41,51 @@ El bat hace todo automaticamente:
 ## Configurar `.env`
 
 ```env
-# Conexion con bot1 (opcional)
-BOT1_WEBHOOK_URL=http://127.0.0.1:8000/webhook/bot3
-BOT1_WEBHOOK_SECRET=a_secure_bot3_secret
+# Binance Futures (requerido)
+BINANCE_API_KEY=tu_api_key_aqui
+BINANCE_API_SECRET=tu_api_secret_aqui
+BINANCE_TESTNET=false
+BINANCE_LEVERAGE=25
+BINANCE_MAX_MARGIN_PCT=0.99
 
-# Modo
-DRY_RUN=false
+# Servidor
 PORT=8001
+DRY_RUN=false
 
-# Secreto para alertas de TradingView
+# TradingView
 TV_WEBHOOK_SECRET=mi_secreto_webhook_123
+TV_ENFORCE_IP_WHITELIST=false
 
 # Telegram (opcional)
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_CHAT_ID=
+
+# Q-Learning
+QLEARNING_ENABLED=true
+QLEARNING_ALPHA_INITIAL=0.10
+QLEARNING_GAMMA=0.90
+QLEARNING_EPSILON_INITIAL=0.20
+QLEARNING_EPSILON_MIN=0.02
+QLEARNING_ALPHA_MIN=0.02
+QLEARNING_DECAY_PER_TRADE=0.999
+QLEARNING_BACKUP_INTERVAL_HOURS=6
+QLEARNING_AUTO_PAUSE_WINDOW=20
+QLEARNING_AUTO_PAUSE_WR_RATIO=0.7
 ```
 
 ---
 
 ## URLs de TradingView (produccion)
 
-```
-Estrategia 1 (apertura):  https://shaft-goliath-shakable.ngrok-free.dev/webhook/strategy/1?secret=mi_secreto_webhook_123
-Estrategia 1 (cierre):    https://shaft-goliath-shakable.ngrok-free.dev/webhook/strategy/1?secret=mi_secreto_webhook_123
-Estrategia 2 (apertura):  https://shaft-goliath-shakable.ngrok-free.dev/webhook/strategy/2?secret=mi_secreto_webhook_123
-Estrategia 2 (cierre):    https://shaft-goliath-shakable.ngrok-free.dev/webhook/strategy/2?secret=mi_secreto_webhook_123
-Estrategia 3:             https://shaft-goliath-shakable.ngrok-free.dev/webhook/strategy/3?secret=mi_secreto_webhook_123
-Estrategias 4-10:         https://shaft-goliath-shakable.ngrok-free.dev/webhook/strategy/{id}?secret=mi_secreto_webhook_123
-```
-
 La misma URL sirve tanto para open como para close — el campo `signal_type` en el body es lo que distingue el tipo de alerta.
+
+```
+Estrategia 1 (SOLUSDT LIVE):    https://shaft-goliath-shakable.ngrok-free.dev/webhook/strategy/1?secret=mi_secreto_webhook_123
+Estrategia 2 (SOLUSDT LEARN):   https://shaft-goliath-shakable.ngrok-free.dev/webhook/strategy/2?secret=mi_secreto_webhook_123
+Estrategia 3 (SOLUSDT LEARN):   https://shaft-goliath-shakable.ngrok-free.dev/webhook/strategy/3?secret=mi_secreto_webhook_123
+Estrategia 4 (ETHUSDT LIVE):    https://shaft-goliath-shakable.ngrok-free.dev/webhook/strategy/4?secret=mi_secreto_webhook_123
+Estrategias 5-10:                https://shaft-goliath-shakable.ngrok-free.dev/webhook/strategy/{id}?secret=mi_secreto_webhook_123
+```
 
 ---
 
@@ -81,7 +98,7 @@ Invoke-WebRequest http://localhost:8001/health | Select-Object -ExpandProperty C
 # 2. Listar las 10 estrategias
 Invoke-WebRequest http://localhost:8001/api/strategies | Select-Object -ExpandProperty Content
 
-# 3. Test apertura estrategia 1
+# 3. Test apertura estrategia 1 (SOLUSDT LIVE)
 $headers = @{ "Content-Type" = "application/json" }
 $body = @{
     status = "pending"
@@ -95,8 +112,6 @@ $body = @{
             f1_sep     = 0.627
             f2_angle   = 0.906
             f3_d200    = 1.701
-            d200_trend = "bajista"
-            slope      = "up"
         }
     }
 } | ConvertTo-Json -Depth 5
@@ -124,7 +139,27 @@ $body = @{
 Invoke-WebRequest -Uri "http://localhost:8001/webhook/strategy/1?secret=mi_secreto_webhook_123" `
     -Method POST -Headers $headers -Body $body
 
-# 5. Test apertura estrategia 2
+# 5. Test apertura estrategia 4 (ETHUSDT LIVE)
+$body = @{
+    status = "pending"
+    signal = @{
+        symbol      = "ETHUSDT"
+        action      = "buy"
+        signal_type = "open"
+        size        = 0.1
+        params      = @{
+            price    = 3200.00
+            f1_sep   = 0.55
+            f2_angle = 0.70
+            f3_d200  = 1.20
+        }
+    }
+} | ConvertTo-Json -Depth 5
+
+Invoke-WebRequest -Uri "http://localhost:8001/webhook/strategy/4?secret=mi_secreto_webhook_123" `
+    -Method POST -Headers $headers -Body $body
+
+# 6. Test apertura estrategia 2 (SOLUSDT LEARN ONLY — no ejecuta en Binance)
 $body = @{
     status = "pending"
     signal = @{
@@ -134,8 +169,6 @@ $body = @{
         size        = 0.1
         params      = @{
             price          = 93.73
-            sl             = 93.63
-            tp             = 93.93
             regime         = "trend_up"
             momentum       = "bullish"
             setup_type     = "breakout"
@@ -155,18 +188,22 @@ Invoke-WebRequest -Uri "http://localhost:8001/webhook/strategy/2?secret=mi_secre
 
 ```powershell
 # Excel de cada estrategia (llenado automaticamente)
-logs\1\trade_log.xlsx   <- estrategia 1 (Apuesta / TEMA 21-55)
-logs\2\trade_log.xlsx   <- estrategia 2 (QLearning 5D)
-logs\3\trade_log.xlsx   <- estrategia 3 (Tanque)
+logs\1\trade_log.xlsx   <- estrategia 1 (SOLUSDT / TEMA 21-55 — LIVE)
+logs\2\trade_log.xlsx   <- estrategia 2 (SOLUSDT / QLearning 5D — LEARN ONLY)
+logs\3\trade_log.xlsx   <- estrategia 3 (SOLUSDT / Tanque — LEARN ONLY)
+logs\4\trade_log.xlsx   <- estrategia 4 (ETHUSDT / EMA 9-21-200 — LIVE)
 # etc.
 
 # Diario de aprendizaje (actualizado tras cada trade cerrado)
 Get-Content logs\1\INSIGHTS.md
-Get-Content logs\2\INSIGHTS.md
+Get-Content logs\4\INSIGHTS.md
 
 # Via API
 Invoke-WebRequest http://localhost:8001/api/strategy/1/journal | Select-Object -ExpandProperty Content
-Invoke-WebRequest http://localhost:8001/api/strategy/2/journal | Select-Object -ExpandProperty Content
+Invoke-WebRequest http://localhost:8001/api/strategy/4/journal | Select-Object -ExpandProperty Content
+
+# Posiciones activas (estrategias 5-10 monitoreadas por Price Poller)
+Invoke-WebRequest http://localhost:8001/pending | Select-Object -ExpandProperty Content
 ```
 
 ---
@@ -182,7 +219,7 @@ python scripts/learn_from_excel.py
 
 # Solo una estrategia
 python scripts/learn_from_excel.py 1
-python scripts/learn_from_excel.py 2
+python scripts/learn_from_excel.py 4
 ```
 
 El script lee columna `result` (WIN/LOSS) del Excel y dispara aprendizaje
@@ -197,7 +234,7 @@ para las filas que aun no tienen `learned_at`.
 taskkill /f /im python.exe
 
 # Restaurar Q-Table de estrategia 1 desde backup
-Copy-Item "data\strategies\1\backups\q_table_20260516_060000.json" `
+Copy-Item "data\strategies\1\backups\q_table_20260518_060000.json" `
           "data\strategies\1\q_table.json"
 
 # Resetear Q-Table de una estrategia (empieza desde cero)
@@ -209,16 +246,10 @@ Remove-Item logs\1\trade_log.xlsx
 
 ---
 
-## Cambios necesarios en bot1 (si lo usas)
+## Configuracion de Binance
 
-**`.env` de bot1:**
-```env
-BOT3_WEBHOOK_SECRET=a_secure_bot3_secret
-BOT3_LOCAL_ONLY=true
-BOT3_ALLOWED_HOSTS=127.0.0.1,::1,localhost
-```
+La API Key debe tener habilitados los permisos de **Futuros** (Futures Trading).
+Sin este permiso, las ordenes fallaran con error de autorizacion.
 
-**`core/bot_registry.py` de bot1:**
-- Agregar `"bot3_1"`, `"bot3_2"`, ..., `"bot3_10"` a `KNOWN_BOTS`
-
-Ver `docs/integration_bot1.md` para los detalles.
+Con `BINANCE_TESTNET=true` el bot usa la testnet de Binance Futures para pruebas
+sin dinero real. Requiere una API Key separada generada en testnet.futures.binance.com.

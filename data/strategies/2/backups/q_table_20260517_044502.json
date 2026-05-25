@@ -1,0 +1,14 @@
+{
+  "range|neutral|trend|neutral|weak": {
+    "EXECUTE_FULL": -0.095,
+    "EXECUTE_HALF": 0.0,
+    "SKIP": 0.0,
+    "INVERT": 0.0
+  },
+  "closed": {
+    "EXECUTE_FULL": 0.0,
+    "EXECUTE_HALF": 0.0,
+    "SKIP": 0.0,
+    "INVERT": 0.0
+  }
+}

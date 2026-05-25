@@ -44,7 +44,7 @@ echo   Directorio : %~dp0
 echo   Puerto     : %PORT%
 echo   DRY_RUN    : %DRY_RUN%
 echo   Q-Learning : %QLEARNING_ENABLED%
-echo   Bot1 URL   : %BOT1_WEBHOOK_URL%
+echo   Binance    : Futuros USDT-M (directo)
 echo.
 echo   Estrategias: 1 ^| 2 ^| 3 ^| 4 ^| 5 ^| 6 ^| 7 ^| 8 ^| 9 ^| 10
 echo.
@@ -90,10 +90,10 @@ echo        OK - dependencias al dia.
 echo.
 
 REM ============================================================
-REM  3. Verificar conexion con bot1 (localhost)
+REM  3. Verificar conexion con Binance
 REM ============================================================
-echo [3/4] Verificando bot1 en localhost:8000...
-powershell -Command "try { $r = Invoke-WebRequest http://localhost:8000/health -TimeoutSec 3 -UseBasicParsing; Write-Host '       OK - bot1 respondio:' $r.StatusCode } catch { Write-Host '       AVISO: bot1 no responde - bot3 arrancara igual' }"
+echo [3/4] Verificando conectividad con Binance...
+powershell -Command "try { $r = Invoke-WebRequest https://api.binance.com/api/v3/ping -TimeoutSec 5 -UseBasicParsing; Write-Host '       OK - Binance responde' } catch { Write-Host '       AVISO: Sin conexion a Binance - verifica internet/API keys' }"
 echo.
 
 REM ============================================================

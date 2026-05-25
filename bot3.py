@@ -37,6 +37,7 @@ from core.qlearning_agent      import QLearningAgent
 from core.reward_calculator    import compute_reward
 from core.tv_signal_parser     import parse_tv_envelope
 from core.strategy_registry    import StrategyRegistry
+from core                      import binance_executor
 from manager.price_poller      import PricePoller
 from utils.excel_logger        import append_excel_rows, update_excel_result
 from manager.qlearning_trainer import QLearningTrainer
@@ -236,6 +237,11 @@ def _build_excel_row_strategy(
         "reason":         decision.get("reason", ""),
         "epsilon":        round(worker.agent.epsilon, 6) if worker else "",
         "alpha":          round(worker.agent.alpha,   6) if worker else "",
+        # Pre-llenadas como PENDING hasta que llegue el cierre
+        "result":         "PENDING",
+        "pnl_pct":        "PENDING",
+        "pnl_notes":      "PENDING",
+        "learned_at":     "",
     }
 
 
@@ -617,7 +623,7 @@ def _send_strategy_to_bot1(
     decision: dict,
     worker,
 ):
-    """Background task: envia a bot1 y registra resultado para una estrategia."""
+    """Background task: ejecuta la orden en Binance Futures directamente."""
     strategy_id = decision["strategy_id"]
     ticker      = decision["symbol"]
     side        = decision["side"]
@@ -625,31 +631,43 @@ def _send_strategy_to_bot1(
     ql_action   = decision["ql_action"]
     state       = decision["state"]
     q_value     = decision["q_value"]
+    params      = decision.get("params", {})
 
-    wh_response    = webhook_client.send(payload)
-    webhook_status = wh_response.get("status", "unknown")
-    order_id       = wh_response.get("order_id", event_id)
+    price = float(params.get("price", 0.0))
+    sl    = float(params.get("sl",    0.0))
+    tp    = float(params.get("tp",    0.0))
 
-    if webhook_status == "dry_run":
-        order_id = f"dry_{ticker}_{event_id}"
-        logger.info(f"[{strategy_id}|{ticker}] DRY_RUN: {ql_action} {side} size={final_size}")
+    # Estrategias en modo solo-aprendizaje (reciben señales pero no ejecutan en Binance)
+    LEARN_ONLY_STRATEGIES = {"2", "3"}
+    simulate = config.DRY_RUN or strategy_id in LEARN_ONLY_STRATEGIES
+
+    # --- Ejecutar en Binance (o simular) ---
+    if simulate:
+        order_id       = f"dry_{ticker}_{event_id}"
+        webhook_status = "dry_run"
+        mode_label     = "LEARN_ONLY" if strategy_id in LEARN_ONLY_STRATEGIES else "DRY_RUN"
+        logger.info(f"[{strategy_id}|{ticker}] {mode_label}: {ql_action} {side} price={price}")
         telegram_notifier.signal_sent(ticker, side, final_size, ql_action, state, True)
-    elif webhook_status == "executed":
-        logger.info(f"[{strategy_id}|{ticker}] bot1 ejecuto: {side} size={final_size} order={order_id}")
-        telegram_notifier.signal_sent(ticker, side, final_size, ql_action, state, False)
-    elif webhook_status == "rejected":
-        reason = wh_response.get("reason", "sin razon")
-        logger.warning(f"[{strategy_id}|{ticker}] bot1 rechazo: {reason}")
-        telegram_notifier.signal_rejected(ticker, reason)
-    elif webhook_status == "failed":
-        error = wh_response.get("error", "error de red")
-        logger.error(f"[{strategy_id}|{ticker}] Fallo de red: {error}")
-        telegram_notifier.webhook_failed(ticker, error)
+    else:
+        result         = binance_executor.open_position(ticker, side, price, sl or None, tp or None)
+        binance_status = result["status"]
+        order_id       = result.get("order_id") or event_id
+        detail         = result.get("detail", "")
 
-    # Rastrear en pending_q_decisions siempre que el bot haya decidido ejecutar.
-    # Si bot1 esta caido (failed), seguimos monitoreando via Price Poller y
-    # el usuario puede revisar el resultado en Excel con learn_from_excel.py.
-    params    = decision.get("params", {})
+        if binance_status == "ok":
+            webhook_status = "executed"
+            logger.info(f"[{strategy_id}|{ticker}] Binance ejecuto: {side} {detail} order={order_id}")
+            telegram_notifier.signal_sent(ticker, side, final_size, ql_action, state, False)
+        elif binance_status == "skip":
+            webhook_status = "rejected"
+            logger.warning(f"[{strategy_id}|{ticker}] Binance skip: {detail}")
+            telegram_notifier.signal_rejected(ticker, detail)
+        else:
+            webhook_status = "failed"
+            logger.error(f"[{strategy_id}|{ticker}] Binance error: {detail}")
+            telegram_notifier.webhook_failed(ticker, detail)
+
+    # --- Tracking para Q-Learning y Price Poller ---
     open_time = datetime.now(timezone.utc).isoformat()
     pending_q_decisions[order_id] = {
         "state":         state,
@@ -658,23 +676,23 @@ def _send_strategy_to_bot1(
         "ticker":        ticker,
         "original_side": decision["original_action"],
         "executed_side": side,
-        # campos para PricePoller
         "strategy_id":   strategy_id,
         "symbol":        ticker,
         "side":          side,
-        "entry_price":   float(params.get("price", 0.0)),
-        "sl":            float(params.get("sl",    0.0)),
-        "tp":            float(params.get("tp",    0.0)),
+        "entry_price":   price,
+        "sl":            sl,
+        "tp":            tp,
         "open_time":     open_time,
-        "bot1_status":   webhook_status,
+        "binance_status": webhook_status,
     }
     # Indice secundario para asociar señales de cierre de TradingView con esta apertura
     open_positions[(strategy_id, ticker)] = {
         "order_id":    order_id,
         "state":       state,
         "action":      ql_action,
+        "side":        side,
         "open_time":   open_time,
-        "entry_price": float(params.get("price", 0.0)),
+        "entry_price": price,
     }
 
     log_entry = {
@@ -712,14 +730,19 @@ def _send_close_to_bot1(
     close_reason:  str,
     worker,
 ):
-    """Background task: envia cierre a bot1, actualiza Q-table y Excel inmediatamente."""
-    wh_response    = webhook_client.send(close_payload)
-    webhook_status = wh_response.get("status", "unknown")
+    """Background task: cierra posicion en Binance, actualiza Q-table y Excel inmediatamente."""
+    LEARN_ONLY_STRATEGIES = {"2", "3"}
+    simulate = config.DRY_RUN or strategy_id in LEARN_ONLY_STRATEGIES
 
-    logger.info(
-        f"[{strategy_id}|{symbol}] CLOSE enviado a bot1: status={webhook_status} "
-        f"pnl={pnl_pct:+.2f}% reason={close_reason}"
-    )
+    if simulate:
+        mode_label = "LEARN_ONLY" if strategy_id in LEARN_ONLY_STRATEGIES else "DRY_RUN"
+        logger.info(f"[{strategy_id}|{symbol}] {mode_label} CLOSE: pnl={pnl_pct:+.2f}% reason={close_reason}")
+    else:
+        result = binance_executor.close_position(symbol)
+        logger.info(
+            f"[{strategy_id}|{symbol}] Binance close: status={result['status']} "
+            f"pnl={pnl_pct:+.2f}% reason={close_reason} detail={result.get('detail','')}"
+        )
 
     # Calcular duracion desde apertura
     try:
@@ -751,11 +774,12 @@ def _send_close_to_bot1(
 
     # Rellenar Excel con resultado final
     resultado = "WIN" if pnl_pct > 0 else "LOSS"
-    pnl_notes = f"{pnl_pct:+.2f}% | {close_reason.upper()} | {duration_min:.0f}min"
+    pnl_notes = f"{close_reason.upper()} | {duration_min:.0f}min"
     update_excel_result(
         order_id    = open_pos["order_id"],
         result      = resultado,
         strategy_id = strategy_id,
+        pnl_pct     = f"{pnl_pct:+.2f}%",
         pnl_notes   = pnl_notes,
     )
 
@@ -844,23 +868,9 @@ async def webhook_strategy(
         )
 
         if open_pos:
-            close_side = "sell" if "buy" in action_close else "buy"
-            close_payload = signal_formatter.build_payload(
-                symbol      = symbol_close,
-                action      = close_side,
-                confidence  = 1.0,
-                size        = close_size,
-                ql_action   = "CLOSE",
-                ql_state    = open_pos["state"],
-                q_value     = 0.0,
-                regime      = "", volatility = "", momentum = "",
-                price       = close_price, sl = 0.0, tp = 0.0, atr = 0.0,
-                strategy_id = f"bot3_{strategy_id}",
-                extra_params= {"close_reason": close_reason},
-            )
             background_tasks.add_task(
                 _send_close_to_bot1,
-                close_payload, event_id_c, strategy_id, symbol_close,
+                {}, event_id_c, strategy_id, symbol_close,
                 open_pos, pnl_pct_close, close_price, close_reason, worker,
             )
             close_status = "close_queued"
@@ -872,17 +882,7 @@ async def webhook_strategy(
             )
             close_status = "close_no_open_tracked"
 
-        return {
-            "strategy":    strategy_id,
-            "symbol":      symbol_close,
-            "signal_type": "close",
-            "action":      action_close,
-            "close_reason": close_reason,
-            "pnl_pct":     pnl_pct_close,
-            "open_found":  open_pos is not None,
-            "status":      close_status,
-            "timestamp":   datetime.now(timezone.utc).isoformat(),
-        }
+        return {"ok": True}
     # ---------------------------------------------------------------------------
 
     try:
@@ -921,62 +921,15 @@ async def webhook_strategy(
         background_tasks.add_task(append_excel_rows, [excel_row], strategy_id)
         background_tasks.add_task(_write_event_report, {**log_entry, "dry_run": config.DRY_RUN}, strategy_id)
 
-        return {
-            "strategy":        strategy_id,
-            "ticker":          ticker,
-            "original_action": original_action,
-            "ql_action":       ql_action,
-            "state":           state,
-            "q_value":         q_value,
-            "execute":         False,
-            "status":          "skipped_by_qlearning",
-            "reason":          decision["reason"],
-            "timestamp":       datetime.now(timezone.utc).isoformat(),
-        }
+        return {"ok": True}
 
-    # -- Construir payload para bot1 --
-    params = decision.get("params", {})
-    payload = signal_formatter.build_payload(
-        symbol      = ticker,
-        action      = side,
-        confidence  = decision["confidence"],
-        size        = final_size,
-        ql_action   = ql_action,
-        ql_state    = state,
-        q_value     = q_value,
-        regime      = params.get("regime",     ""),
-        volatility  = params.get("volatility", ""),
-        momentum    = params.get("momentum",   ""),
-        price       = float(params.get("price", 0.0)),
-        sl          = float(params.get("sl",    0.0)),
-        tp          = float(params.get("tp",    0.0)),
-        atr         = float(params.get("atr",   0.0)),
-        strategy_id = f"bot3_{strategy_id}",
-        extra_params= {"source_strategy": strategy_id},
-    )
-
-    # Enviar a bot1 en background (no bloquear TradingView)
+    # Ejecutar en Binance directo (background para no bloquear TradingView)
     background_tasks.add_task(
         _send_strategy_to_bot1,
-        payload, event_id, decision, worker,
+        {}, event_id, decision, worker,
     )
 
-    return {
-        "strategy":        strategy_id,
-        "ticker":          ticker,
-        "original_action": original_action,
-        "ql_action":       ql_action,
-        "state":           state,
-        "q_value":         q_value,
-        "execute":         True,
-        "side":            side,
-        "size":            final_size,
-        "status":          "queued",
-        "event_id":        event_id,
-        "dry_run":         config.DRY_RUN,
-        "reason":          decision["reason"],
-        "timestamp":       datetime.now(timezone.utc).isoformat(),
-    }
+    return {"ok": True}
 
 
 @app.get("/api/strategies")

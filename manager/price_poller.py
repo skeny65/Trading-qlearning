@@ -12,13 +12,18 @@ Fuente de precio:
   - Gratuita, sin autenticacion, actualizada en tiempo real
   - Funciona para cualquier par de crypto en Binance
 
-Flujo:
+Scope:
+  Solo monitorea estrategias 4-10. Las estrategias 1, 2 y 3 gestionan su propio
+  cierre via alerta TradingView (signal_type="close") — el Poller las ignora para
+  evitar doble aprendizaje. Ver SELF_CLOSING_STRATEGIES.
+
+Flujo (estrategias 4-10):
   1. bot3 abre trade → guarda en pending_q_decisions con entry/sl/tp
   2. PricePoller corre cada POLL_INTERVAL_SEC
-  3. Para cada pending: obtiene precio actual de Binance
+  3. Para cada pending (excluye estrategias 1,2,3): obtiene precio de Binance
   4. Si precio >= TP (buy) o <= TP (sell) → TP HIT
   5. Si precio <= SL (buy) o >= SL (sell) → SL HIT
-  6. Calcula PnL%, llama worker.update_q()  → Q-table aprende
+  6. Calcula PnL%, llama worker.update_q() → Q-table aprende
   7. Remueve de pending_q_decisions
 """
 import json
@@ -38,6 +43,10 @@ BINANCE_PRICE_URL     = "https://api.binance.com/api/v3/ticker/price"
 POLL_INTERVAL_SEC     = 60      # revisar posiciones cada 60 segundos
 MAX_TRADE_DURATION_H  = 24      # cerrar forzado si lleva mas de 24h abierto
 PRICE_FETCH_TIMEOUT   = 5       # timeout de red en segundos
+
+# Estrategias que gestionan su propio cierre via alerta TradingView (signal_type="close").
+# El Poller NO debe interferir con ellas — el Q-update lo dispara la alerta de cierre.
+SELF_CLOSING_STRATEGIES = {"1", "2", "3", "4"}
 
 
 class PricePoller:
@@ -86,14 +95,19 @@ class PricePoller:
         if not self._pending:
             return
 
-        # Snapshot para evitar mutacion durante iteracion
+        # Snapshot para evitar mutacion durante iteracion.
+        # Excluir estrategias que cierran via alerta TradingView (1, 2, 3).
         order_ids = list(self._pending.keys())
-        activas   = [oid for oid in order_ids if "entry_price" in self._pending.get(oid, {})]
+        activas = [
+            oid for oid in order_ids
+            if "entry_price" in self._pending.get(oid, {})
+            and self._pending[oid].get("strategy_id", "") not in SELF_CLOSING_STRATEGIES
+        ]
 
         if not activas:
             return
 
-        logger.debug(f"PricePoller: revisando {len(activas)} posicion(es) abiertas")
+        logger.debug(f"PricePoller: revisando {len(activas)} posicion(es) abiertas (excluye 1,2,3)")
 
         for order_id in activas:
             pending = self._pending.get(order_id)
@@ -211,8 +225,8 @@ class PricePoller:
         # -- Remover de pendientes
         self._pending.pop(order_id, None)
 
-        resultado  = "WIN" if pnl_pct > 0 else ("LOSS" if pnl_pct < 0 else "LOSS")
-        pnl_notes  = f"{pnl_pct:+.2f}% | {reason} | {duration_min:.0f}min | R={r_multiple:.2f}x"
+        resultado  = "WIN" if pnl_pct > 0 else "LOSS"
+        pnl_notes  = f"{reason} | {duration_min:.0f}min | R={r_multiple:.2f}x"
 
         logger.info(
             f"[{resultado}] [{strategy_id}|{order_id}] {reason}: "
@@ -226,6 +240,7 @@ class PricePoller:
             order_id    = order_id,
             result      = resultado,
             strategy_id = strategy_id,
+            pnl_pct     = f"{pnl_pct:+.2f}%",
             pnl_notes   = pnl_notes,
         )
         if not updated:

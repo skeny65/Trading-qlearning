@@ -41,14 +41,15 @@ COLUMNS = [
     "reason",
     "epsilon",
     "alpha",
-    # Llenadas automaticamente por el Price Poller cuando cierra la posicion
-    "result",      # WIN o LOSS
-    "pnl_notes",   # "+1.45% | TP_HIT | 47min | R=2.34x"
+    # Llenadas al abrir como PENDING, actualizadas automaticamente al cerrar
+    "result",      # PENDING → WIN o LOSS
+    "pnl_pct",     # PENDING → "+1.45%" o "-0.29%"
+    "pnl_notes",   # PENDING → "TP_HIT | 47min | R=2.34x"
     "learned_at",  # timestamp UTC del cierre
 ]
 
 # Columnas que se agregan automaticamente si el Excel es antiguo
-_NEW_COLUMNS = ["result", "pnl_notes", "learned_at"]
+_NEW_COLUMNS = ["result", "pnl_pct", "pnl_notes", "learned_at"]
 
 _COL_WIDTHS = {
     "timestamp_utc": 22, "event_id": 20, "strategy_id": 12, "mode": 8,
@@ -58,7 +59,7 @@ _COL_WIDTHS = {
     "execute": 8, "final_action": 12, "size": 7, "confidence": 11,
     "webhook_status": 14, "order_id": 36, "reason": 30,
     "epsilon": 8, "alpha": 7,
-    "result": 10, "pnl_notes": 35, "learned_at": 22,
+    "result": 10, "pnl_pct": 10, "pnl_notes": 30, "learned_at": 22,
 }
 
 
@@ -124,12 +125,13 @@ def update_excel_result(
     order_id:    str,
     result:      str,
     strategy_id: str = "qlearning",
+    pnl_pct:     str = "",
     pnl_notes:   str = "",
 ) -> bool:
     """
-    Busca la fila con order_id en el Excel y escribe result, pnl_notes, learned_at.
+    Busca la fila con order_id en el Excel y escribe result, pnl_pct, pnl_notes, learned_at.
+    Sobreescribe aunque la fila diga PENDING (puesto al abrir).
     Si las columnas no existen (Excel antiguo), las migra automaticamente.
-    Llamado por PricePoller cuando detecta TP o SL.
     """
     try:
         import openpyxl
@@ -155,6 +157,7 @@ def update_excel_result(
     col_map     = _migrate_columns(ws)
     order_col   = col_map.get("order_id")
     result_col  = col_map.get("result")
+    pnl_pct_col = col_map.get("pnl_pct")
     notes_col   = col_map.get("pnl_notes")
     learned_col = col_map.get("learned_at")
 
@@ -167,9 +170,12 @@ def update_excel_result(
 
     for row in ws.iter_rows(min_row=2):
         if str(row[order_col - 1].value or "").strip() == order_id:
-            # No sobreescribir si el trader ya puso algo manualmente
-            if not row[result_col - 1].value:
+            current = str(row[result_col - 1].value or "").strip()
+            # Sobreescribir si esta vacio o en PENDING; respetar edicion manual del trader
+            if current in ("", "PENDING"):
                 row[result_col  - 1].value = result
+                if pnl_pct_col:
+                    row[pnl_pct_col - 1].value = pnl_pct
                 row[notes_col   - 1].value = pnl_notes
                 row[learned_col - 1].value = now_ts
                 found = True
@@ -178,7 +184,7 @@ def update_excel_result(
     if found:
         try:
             wb.save(excel_path)
-            logger.info(f"Excel [{strategy_id}] result={result} order={order_id} notes={pnl_notes}")
+            logger.info(f"Excel [{strategy_id}] result={result} pnl={pnl_pct} order={order_id}")
         except PermissionError:
             logger.warning(f"Excel abierto [{strategy_id}] - no se pudo guardar resultado")
             return False

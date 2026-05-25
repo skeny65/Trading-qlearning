@@ -1,87 +1,102 @@
 # Variables de Entorno — bot3-qlearning
 
-Copia `.env.example` a `.env` y edita los valores marcados con *.
+Archivo: `.env` en la raiz del proyecto.
 
 ---
 
-## Conexion con bot1
+## Binance Futures (requerido)
 
-| Variable            | Descripcion                                              | Valor actual          |
-|---------------------|----------------------------------------------------------|-----------------------|
-| `BOT1_WEBHOOK_URL`  | URL del endpoint de bot1 que recibe señales de bot3      | `http://127.0.0.1:8000/webhook/bot3` |
-| `BOT1_WEBHOOK_SECRET` * | Secreto que bot1 espera en `X-Webhook-Secret`        | `a_secure_bot3_secret` (cambiar en prod) |
+| Variable             | Valor actual | Descripcion                                          |
+|----------------------|--------------|------------------------------------------------------|
+| BINANCE_API_KEY      | (tu key)     | API Key de Binance — requiere permisos de Futuros    |
+| BINANCE_API_SECRET   | (tu secret)  | API Secret de Binance                                |
+| BINANCE_TESTNET      | false        | `true` = usar testnet (paper trading)                |
+| BINANCE_LEVERAGE     | 25           | Apalancamiento para todas las ordenes                |
+| BINANCE_MAX_MARGIN_PCT | 0.95       | % del balance disponible a usar (0.95 = 95%). 0.99 causa error "Margin is insufficient" por fees |
 
-> Este secreto es el mismo que `BOT3_WEBHOOK_SECRET` en el `.env` de bot1.
+**Nota:** El bot consulta el balance en vivo antes de cada trade y usa el 99% del disponible.
+No hay margen fijo — es siempre todo el balance con efecto compuesto automatico.
 
 ---
 
-## Servidor bot3
+## Servidor
 
-| Variable  | Descripcion                               | Default |
-|-----------|-------------------------------------------|---------|
-| `PORT`    | Puerto donde escucha uvicorn              | `8001`  |
-| `DRY_RUN` | `true` = no envia a bot1, solo loguea     | `false` |
+| Variable        | Valor  | Descripcion                              |
+|-----------------|--------|------------------------------------------|
+| PORT            | 8001   | Puerto del servidor FastAPI              |
+| DRY_RUN         | false  | `true` = simula sin enviar ordenes reales|
 
 ---
 
 ## TradingView Webhook
 
-| Variable                  | Descripcion                                                    | Default |
-|---------------------------|----------------------------------------------------------------|---------|
-| `TV_WEBHOOK_SECRET` *     | Clave que TradingView envia en `X-Webhook-Secret`              | —       |
-| `TV_ALLOWED_IPS`          | IPs oficiales de TradingView (separadas por coma)              | ver abajo |
-| `TV_ENFORCE_IP_WHITELIST` | `true` = rechaza peticiones de IPs no permitidas               | `false` |
-
-IPs oficiales TradingView (2026):
-```
-52.89.214.238,34.212.75.30,54.218.53.128,52.32.178.7
-```
-
-> Dejar `TV_ENFORCE_IP_WHITELIST=false` mientras se usa ngrok o se prueba localmente.
+| Variable                | Valor                  | Descripcion                              |
+|-------------------------|------------------------|------------------------------------------|
+| TV_WEBHOOK_SECRET       | mi_secreto_webhook_123 | Secret que TradingView envia en la alerta|
+| TV_ENFORCE_IP_WHITELIST | false                  | `true` = solo acepta IPs de TradingView  |
+| TV_ALLOWED_IPS          | (IPs oficiales TV)     | Lista de IPs permitidas                  |
 
 ---
 
 ## Telegram (opcional)
 
-| Variable             | Descripcion                          | Default |
-|----------------------|--------------------------------------|---------|
-| `TELEGRAM_BOT_TOKEN` | Token del bot de Telegram            | —       |
-| `TELEGRAM_CHAT_ID`   | Chat ID donde llegan las alertas     | —       |
+| Variable           | Valor | Descripcion                    |
+|--------------------|-------|--------------------------------|
+| TELEGRAM_BOT_TOKEN | -     | Token del bot de Telegram      |
+| TELEGRAM_CHAT_ID   | -     | Chat ID para notificaciones    |
 
-Si estas variables estan vacias, bot3 simplemente no envia notificaciones (no hay error).
-
----
-
-## Q-Learning — hiperparametros
-
-| Variable                        | Descripcion                                        | Default |
-|---------------------------------|----------------------------------------------------|---------|
-| `QLEARNING_ENABLED`             | Activar el agente Q-Learning                       | `true`  |
-| `QLEARNING_ALPHA_INITIAL`       | Learning rate inicial                              | `0.10`  |
-| `QLEARNING_ALPHA_MIN`           | Learning rate minimo (floor del decay)             | `0.02`  |
-| `QLEARNING_GAMMA`               | Factor de descuento (horizonte temporal)           | `0.90`  |
-| `QLEARNING_EPSILON_INITIAL`     | Exploracion inicial (0=explotar, 1=explorar)       | `0.20`  |
-| `QLEARNING_EPSILON_MIN`         | Epsilon minimo (floor del decay)                   | `0.02`  |
-| `QLEARNING_DECAY_PER_TRADE`     | Multiplicador de decay por trade                   | `0.999` |
-| `QLEARNING_BACKUP_INTERVAL_HOURS` | Cada cuantas horas crear backup de Q-Table       | `6`     |
-| `QLEARNING_AUTO_PAUSE_WINDOW`   | Trades para evaluar degradacion                    | `20`    |
-| `QLEARNING_AUTO_PAUSE_WR_RATIO` | Ratio de caida de win rate para auto-pausa         | `0.7`   |
+Si no se configuran, las notificaciones se omiten silenciosamente.
 
 ---
 
-## Variables que bot3 NO usa
+## Q-Learning
 
-Bot3 no conecta directamente con Alpaca — toda ejecucion pasa por bot1.
-Por eso el `.env` de bot3 **no tiene** `ALPACA_API_KEY`, `ALPACA_SECRET_KEY` ni `ALPACA_BASE_URL`.
+| Variable                  | Valor | Descripcion                                      |
+|---------------------------|-------|--------------------------------------------------|
+| QLEARNING_ENABLED         | true  | `false` = desactiva Q-Learning completamente     |
+| QLEARNING_ALPHA_INITIAL   | 0.10  | Tasa de aprendizaje inicial                      |
+| QLEARNING_GAMMA           | 0.90  | Factor de descuento (importancia del futuro)     |
+| QLEARNING_EPSILON_INITIAL | 0.20  | Exploracion inicial (20% de decisiones random)   |
+| QLEARNING_EPSILON_MIN     | 0.02  | Exploracion minima (2% siempre explora algo)     |
+| QLEARNING_ALPHA_MIN       | 0.02  | Alpha minimo (nunca deja de aprender del todo)   |
+| QLEARNING_DECAY_PER_TRADE | 0.999 | Decaimiento de epsilon y alpha por trade         |
+| QLEARNING_BACKUP_INTERVAL_HOURS | 6 | Cada cuantas horas hace backup de Q-tables    |
+| QLEARNING_AUTO_PAUSE_WINDOW     | 20 | Ventana de trades para auto-pausa             |
+| QLEARNING_AUTO_PAUSE_WR_RATIO   | 0.7| Win rate minimo antes de auto-pausa           |
 
 ---
 
-## Variables en el `.env` de bot1 (referencia)
-
-Estos valores van en bot1, no en bot3:
+## Configuracion completa de ejemplo
 
 ```env
-BOT3_WEBHOOK_SECRET=a_secure_bot3_secret
-BOT3_LOCAL_ONLY=true
-BOT3_ALLOWED_HOSTS=127.0.0.1,::1,localhost
+# Binance Futures
+BINANCE_API_KEY=tu_api_key_aqui
+BINANCE_API_SECRET=tu_api_secret_aqui
+BINANCE_TESTNET=false
+BINANCE_LEVERAGE=25
+BINANCE_MAX_MARGIN_PCT=0.99
+
+# Servidor
+PORT=8001
+DRY_RUN=false
+
+# TradingView
+TV_WEBHOOK_SECRET=mi_secreto_webhook_123
+TV_ENFORCE_IP_WHITELIST=false
+
+# Telegram (opcional)
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_ID=
+
+# Q-Learning
+QLEARNING_ENABLED=true
+QLEARNING_ALPHA_INITIAL=0.10
+QLEARNING_GAMMA=0.90
+QLEARNING_EPSILON_INITIAL=0.20
+QLEARNING_EPSILON_MIN=0.02
+QLEARNING_ALPHA_MIN=0.02
+QLEARNING_DECAY_PER_TRADE=0.999
+QLEARNING_BACKUP_INTERVAL_HOURS=6
+QLEARNING_AUTO_PAUSE_WINDOW=20
+QLEARNING_AUTO_PAUSE_WR_RATIO=0.7
 ```

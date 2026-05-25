@@ -1,184 +1,156 @@
 # Flujo End-to-End - bot3 Multi-Strategy
 
-Hay dos flujos de operacion segun la estrategia:
+## Resumen por estrategia
 
-| Estrategias | Flujo de cierre               | Aprendizaje Q         |
-|-------------|-------------------------------|-----------------------|
-| 1 y 2       | 2 alertas (open + close)      | Inmediato al recibir close |
-| 3 a 10      | 1 alerta + Price Poller       | Cuando Binance detecta TP/SL |
+| Estrategias | Par     | Flujo de cierre          | Binance  | Aprendizaje Q         |
+|-------------|---------|--------------------------|----------|-----------------------|
+| 1           | SOLUSDT | 2 alertas (open + close) | LIVE     | Inmediato al cierre   |
+| 2           | SOLUSDT | 2 alertas (open + close) | LEARN ONLY | Inmediato al cierre |
+| 3           | SOLUSDT | 2 alertas (open + close) | LEARN ONLY | Inmediato al cierre |
+| 4           | ETHUSDT | 2 alertas (open + close) | LIVE     | Inmediato al cierre   |
+| 5-10        | varios  | 1 alerta + Price Poller  | LIVE     | Cuando Poller detecta TP/SL |
 
 ---
 
-## Flujo A: Estrategias 1 y 2 — 2 alertas por operacion
+## Flujo A: Estrategias 1 y 4 — 2 alertas, ejecucion real en Binance
 
 ### Alerta 1: APERTURA
 
 ```
-+-------------------+
-|   TradingView     |
-|   signal_type:    |
-|   "open"          |
-+--------+----------+
+TradingView
+  POST /webhook/strategy/1  (o /4)
+  Body: {signal_type:"open", action:"buy"/"sell", params:{f1_sep, f2_angle, f3_d200, price}}
          |
-         |  POST /webhook/strategy/1  (o /2)
-         |  Body: {signal_type:"open", action:"buy", params:{f1,f2,f3,...}}
          v
-+-----------------------------------------------------------+
-|              bot3.py -- localhost:8001                    |
-|                                                           |
-|  1. Verificar secret                                      |
-|  2. Detecta signal_type="open" -> flujo Q-Learning        |
-|  3. worker.decide(body):                                  |
-|     Estrategia 1: encode_state -> f1_level|f2_level|f3_level|
-|     Estrategia 2: encode_state -> regime|momentum|setup|htf|strength|
-|     agent.choose_action(state) [epsilon-greedy]           |
-|     -> EXECUTE_FULL / EXECUTE_HALF / SKIP / INVERT        |
-|                                                           |
-|  4. Escribe fila en Excel (result=VACIO todavia)          |
-|  5. Si ejecuta:                                           |
-|     -> Envia a bot1 en background                         |
-|     -> open_positions[(id, symbol)] = {state, action}     |
-|     -> pending_q_decisions[order_id] = {state, action...} |
-+-----------------------------------------------------------+
+bot3.py
+  1. Verifica secret + status="pending"
+  2. Detecta signal_type="open" -> flujo Q-Learning
+  3. worker.encode_state(params):
+       f1_sep=0.627  -> "wide"
+       f2_angle=0.906 -> "strong"
+       f3_d200=1.701  -> "far"
+       estado = "wide|strong|far"
+  4. agent.choose_action(estado) [epsilon-greedy]
+       Q-table nueva -> todos Q=0 -> elige EXECUTE_FULL
+       Con experiencia -> elige la accion con mayor Q-value
+  5. Si EXECUTE_FULL o EXECUTE_HALF o INVERT:
+       [background] binance_executor.open_position(symbol, side, price)
+         * get_usdt_balance()     -> $17.54 USDT
+         * margin = 17.54 * 0.99 -> $17.36
+         * notional = 17.36 * 25 -> $434
+         * qty = 434 / price      -> redondeado al step de Binance
+         * futures_change_leverage(25)
+         * MARKET BUY qty
+         * (sin SL/TP para estrategias 1,4 — gestionado por TradingView)
+       open_positions[("1","SOLUSDT")] = {state, action, side, entry_price, open_time}
+       Excel: fila nueva con result="PENDING", pnl_pct="PENDING"
+  6. Si SKIP: registra en Excel y sale sin tocar Binance
+  7. Responde a TradingView: {"ok": true}
 ```
 
 ### Alerta 2: CIERRE
 
 ```
-+-------------------+
-|   TradingView     |
-|   signal_type:    |
-|   "close"         |
-+--------+----------+
+TradingView
+  POST /webhook/strategy/1  (o /4)
+  Body: {signal_type:"close", action:"close_buy"/"close_sell",
+         params:{price, entry_price, pnl_pct, close_reason}}
          |
-         |  POST /webhook/strategy/1  (o /2)
-         |  Body: {signal_type:"close", action:"close_buy",
-         |         params:{price, entry_price, pnl_pct, close_reason}}
          v
-+-----------------------------------------------------------+
-|              bot3.py -- localhost:8001                    |
-|                                                           |
-|  1. Detecta signal_type="close" -> bypass Q-Learning      |
-|  2. Recupera open_positions[(id, symbol)]                 |
-|     -> state y action de cuando se abrio                  |
-|  3. Envia orden de cierre a bot1 (background)             |
-|  4. _send_close_to_bot1():                                |
-|     - compute_reward(pnl_pct, duration_min)               |
-|     - worker.update_q(state, action, reward) INMEDIATO    |
-|       -> Bellman: Q(s,a) += alpha*[r + gamma*maxQ' - Q(s,a)]|
-|       -> agent.decay_params() -> epsilon y alpha decaen   |
-|       -> INSIGHTS.md regenerado                           |
-|     - update_excel_result(order_id, WIN/LOSS) INMEDIATO   |
-|       -> pnl_notes = "+0.50% | CROSS | 32min"             |
-|     - Elimina de open_positions y pending_q_decisions     |
-+-----------------------------------------------------------+
+bot3.py
+  1. Detecta signal_type="close" -> bypass Q-Learning
+  2. Recupera open_positions[("1","SOLUSDT")]
+       -> state="wide|strong|far", action="EXECUTE_FULL", open_time=...
+  3. [background] binance_executor.close_position(symbol)
+       * cancel_open_orders(symbol)  -> cancela SL/TP colgados
+       * get_position_qty(symbol)    -> qty real de Binance
+       * MARKET SELL qty reduceOnly
+  4. compute_reward(pnl_pct, duration_min)
+  5. worker.update_q("wide|strong|far", "EXECUTE_FULL", reward)
+       Bellman: Q(s,a) += alpha * [r + gamma*maxQ' - Q(s,a)]
+       epsilon y alpha decaen con cada trade
+       INSIGHTS.md regenerado
+  6. update_excel_result(order_id, WIN/LOSS, pnl_pct, pnl_notes)
+       result="WIN", pnl_pct="+0.47%", pnl_notes="ANTI_PARALLEL | 45min"
+  7. Elimina de open_positions y pending_q_decisions
+  8. Responde a TradingView: {"ok": true}
 ```
 
 ---
 
-## Flujo B: Estrategias 3-10 — 1 alerta + Price Poller
+## Flujo B: Estrategias 2 y 3 — 2 alertas, LEARN ONLY
+
+Identico al Flujo A, excepto:
+- **Apertura:** el bot simula la orden (log `LEARN_ONLY`) sin llamar a Binance
+- **Cierre:** no llama a `close_position()`, calcula reward y actualiza Q-table igual
+- El Excel se llena igual: PENDING -> WIN/LOSS con pnl_pct
+- El agente aprende exactamente igual que en LIVE
+
+Util para acumular experiencia con senales reales sin arriesgar capital.
+
+---
+
+## Flujo C: Estrategias 5-10 — 1 alerta + Price Poller
 
 ```
-+-------------------+
-|   TradingView     |
-|   (1 alerta)      |
-+--------+----------+
+TradingView
+  POST /webhook/strategy/5  (o /6.../10)
+  Body: {action:"buy", params:{price, sl, tp}}
          |
-         |  POST /webhook/strategy/3  (o /4 ... /10)
-         |  Body: {action:"buy", params:{price, sl, tp, ...}}
          v
-+-----------------------------------------------------------+
-|              bot3.py -- localhost:8001                    |
-|                                                           |
-|  1. Detecta signal_type ausente o "open" -> flujo Q       |
-|  2. worker.decide(body) -> EXECUTE / SKIP / ...           |
-|  3. Si ejecuta:                                           |
-|     -> Envia a bot1                                       |
-|     -> pending_q_decisions[order_id] = {                  |
-|         state, action, entry_price, sl, tp, open_time     |
-|       }                                                   |
-+-----------------------------------------------------------+
-                         |
-                         v
-+-----------------------------------------------------------+
-|  manager/price_poller.py  (hilo daemon, cada 60s)         |
-|                                                           |
-|  GET https://api.binance.com/api/v3/ticker/price          |
-|  Sin API key                                              |
-|                                                           |
-|  Para cada pending con sl + tp:                           |
-|    BUY:  precio >= tp -> WIN  |  precio <= sl -> LOSS     |
-|    SELL: precio <= tp -> WIN  |  precio >= sl -> LOSS     |
-|    > 24h sin cierre   -> EXPIRED (LOSS)                   |
-|                                                           |
-|  Al detectar cierre -> _close_position():                 |
-|    1. worker.update_q(state, action, reward, next_state)  |
-|    2. update_excel_result(order_id, WIN/LOSS, pnl_notes)  |
-|       pnl_notes = "+2.34% | TP_HIT | 47min | R=2.34x"    |
-+-----------------------------------------------------------+
+bot3.py
+  1. signal_type ausente o "open" -> flujo Q-Learning
+  2. worker.encode_state -> estado scaffold (price_zone|rr_level|hour_zone)
+  3. Si ejecuta: binance_executor.open_position(symbol, side, price, sl, tp)
+       * MARKET entry + STOP_MARKET(sl) + TAKE_PROFIT_MARKET(tp)
+  4. pending_q_decisions[order_id] = {state, action, entry_price, sl, tp, open_time}
+  5. Responde: {"ok": true}
+         |
+         v (hilo daemon, cada 60s)
+price_poller.py
+  GET https://api.binance.com/api/v3/ticker/price?symbol=SOLUSDT
+  Para cada pending (estrategias 5-10):
+    BUY:  precio >= tp -> WIN  |  precio <= sl -> LOSS
+    SELL: precio <= tp -> WIN  |  precio >= sl -> LOSS
+    > 24h -> EXPIRED (LOSS)
+  Al detectar:
+    worker.update_q(state, action, reward)
+    update_excel_result(WIN/LOSS, pnl_pct, pnl_notes)
+    Elimina de pending_q_decisions
 ```
 
 ---
 
-## Resultado en Excel (automatico en ambos flujos)
+## Resultado en Excel (automatico en todos los flujos)
 
-| timestamp_utc        | symbol  | ql_action    | ql_state          | execute | result   | pnl_notes                      | learned_at           |
-|----------------------|---------|--------------|-------------------|---------|----------|--------------------------------|----------------------|
-| 2026-05-16T07:20:00Z | SOLUSDT | EXECUTE_FULL | wide\|strong\|far  | True    | **LOSS** | **-0.29% \| CROSS \| 32min**  | 2026-05-16T07:52:00Z |
-| 2026-05-16T13:00:00Z | SOLUSDT | EXECUTE_FULL | wide\|strong\|mid  | True    | **WIN**  | **+1.45% \| TP_HIT \| 47min** | 2026-05-16T13:47:00Z |
+### Al abrir (inmediato):
+| timestamp_utc | symbol | ql_action | ql_state | price | result | pnl_pct | pnl_notes |
+|---|---|---|---|---|---|---|---|
+| 2026-05-18T07:00:00Z | SOLUSDT | EXECUTE_FULL | wide\|strong\|far | 87.37 | PENDING | PENDING | PENDING |
 
-**El Excel se llena automaticamente. No necesitas hacer nada.**
-
----
-
-## Flujo de revision manual en Excel (siempre disponible)
-
-Si necesitas corregir un resultado o aprender de un trade que el bot no capturo:
-
-```
-1. Abre logs/{id}/trade_log.xlsx
-2. En columna 'result': escribe WIN o LOSS en la fila que quieras
-3. Guarda el Excel
-4. Corre: python scripts/learn_from_excel.py
-   -> Lee filas con WIN/LOSS y learned_at vacio
-   -> Llama POST /api/strategy/{id}/update por cada una
-   -> El agente aprende y regenera INSIGHTS.md
-   -> Marca learned_at en Excel (no reprocesa)
-```
-
-```powershell
-# Ver que se procesaria sin hacer nada
-python scripts/learn_from_excel.py --dry-run
-
-# Procesar todas las estrategias
-python scripts/learn_from_excel.py
-
-# Solo una estrategia
-python scripts/learn_from_excel.py 1
-python scripts/learn_from_excel.py 2
-```
+### Al cerrar (automatico):
+| timestamp_utc | symbol | ql_action | ql_state | price | result | pnl_pct | pnl_notes |
+|---|---|---|---|---|---|---|---|
+| 2026-05-18T07:00:00Z | SOLUSDT | EXECUTE_FULL | wide\|strong\|far | 87.37 | **WIN** | **+0.47%** | **ANTI_PARALLEL \| 45min** |
 
 ---
 
-## INSIGHTS.md - Lo que aprende el agente (estrategia 1 como ejemplo)
-
-Despues de suficientes trades, `logs/1/INSIGHTS.md` muestra automaticamente:
+## Calculo de cantidad en Binance (automatico)
 
 ```
-## Contextos RENTABLES
+balance_disponible = get_usdt_balance()           # consulta en vivo antes de cada trade
+margen             = balance * 0.99               # 99% del balance (1% para fees)
+notional           = margen * 25                  # leverage x25
+qty_raw            = notional / precio_entrada
+qty                = redondear_hacia_abajo(qty_raw, step_size_binance)
 
-| Estado              | Accion       | Q-value |
-|---------------------|--------------|---------|
-| wide|strong|far     | EXECUTE_FULL | +0.3842 |
-| wide|mid|far        | EXECUTE_FULL | +0.2100 |
-
-Sugerencia: Prioriza señales cuando f1>=0.5%, f2>=0.2%, precio lejos de DEMA200.
-
-## Contextos BLOQUEADOS
-
-| Estado              | Accion evitada | Q-value |
-|---------------------|----------------|---------|
-| tight|flat|near     | EXECUTE_FULL   | -0.4200 |
-
-Filtros sugeridos: Evitar entradas cuando f1<0.2%, f2<0.2%, precio cerca DEMA200.
+Ejemplo con $17.54 USDT en SOLUSDT a $87.37:
+  margen   = $17.54 * 0.99 = $17.36
+  notional = $17.36 * 25   = $434.09
+  qty_raw  = $434.09 / $87.37 = 4.967 SOL
+  qty      = 4.9 SOL  (step=0.1)
+  margen_real = 4.9 * $87.37 / 25 = $17.12 USDT
 ```
+
+El balance se consulta en tiempo real antes de cada trade, por lo que el efecto
+compuesto es automatico: si ganas $2, la proxima orden usa $19.54 de balance.
