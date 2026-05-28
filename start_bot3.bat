@@ -3,9 +3,9 @@ setlocal enabledelayedexpansion
 title Bot3 Q-Learning (:8001)
 
 REM ============================================================
-REM  Directorio base: carpeta donde esta este .bat
+REM  Directorio base: carpeta donde esta este .bat -> sistema/
 REM ============================================================
-cd /d "%~dp0"
+cd /d "%~dp0sistema"
 
 REM ============================================================
 REM  Leer .env (ignora comentarios y lineas vacias)
@@ -40,7 +40,8 @@ echo  ============================================================
 echo   BOT3 Q-LEARNING  ^|  Trading Signal Agent
 echo  ============================================================
 echo.
-echo   Directorio : %~dp0
+echo   Raiz       : %~dp0
+echo   Sistema    : %~dp0sistema
 echo   Puerto     : %PORT%
 echo   DRY_RUN    : %DRY_RUN%
 echo   Q-Learning : %QLEARNING_ENABLED%
@@ -140,7 +141,7 @@ goto :restart_loop
 
 :fin
 echo.
-echo  Bot3 detenido. Revisa los logs en la carpeta logs\
+echo  Bot3 detenido. Revisa los logs en sistema\logs\
 echo.
 pause
 endlocal

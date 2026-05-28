@@ -1,0 +1,16 @@
+{
+  "event_id": "20260527_030003967611",
+  "strategy_id": "1",
+  "decision": "EXECUTE",
+  "ql_action": "EXECUTE_FULL",
+  "symbol": "ETHUSDT",
+  "action": "buy",
+  "state": "tight|mid|mid",
+  "q_value": 0.0,
+  "size": 0.1,
+  "webhook_status": "executed",
+  "order_id": "8389766189333824647",
+  "reason": "[1] Q-Learning: execute full",
+  "dry_run": false,
+  "logged_at": "2026-05-27T03:00:05.244465+00:00"
+}

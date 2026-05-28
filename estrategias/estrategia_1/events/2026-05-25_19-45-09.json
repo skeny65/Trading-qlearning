@@ -1,0 +1,16 @@
+{
+  "event_id": "20260525_194503311065",
+  "strategy_id": "1",
+  "decision": "FAILED",
+  "ql_action": "EXECUTE_FULL",
+  "symbol": "ETHUSDT",
+  "action": "sell",
+  "state": "mid|flat|mid",
+  "q_value": 0.0,
+  "size": 0.1,
+  "webhook_status": "failed",
+  "order_id": "20260525_194503311065",
+  "reason": "[1] Q-Learning: execute full",
+  "dry_run": false,
+  "logged_at": "2026-05-25T19:45:07.896353+00:00"
+}
