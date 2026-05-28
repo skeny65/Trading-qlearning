@@ -1,4 +1,4 @@
-# Variables de Entorno — bot3-qlearning
+# Variables de Entorno — bot_ejecutor
 
 Archivo: `.env` en la raiz del proyecto.
 
@@ -49,18 +49,18 @@ Si no se configuran, las notificaciones se omiten silenciosamente.
 
 ---
 
-## Q-Learning
+## Motor de Decision (ejecutor)
 
 | Variable                  | Valor | Descripcion                                      |
 |---------------------------|-------|--------------------------------------------------|
-| QLEARNING_ENABLED         | true  | `false` = desactiva Q-Learning completamente     |
+| QLEARNING_ENABLED         | true  | `false` = desactiva el motor de decision         |
 | QLEARNING_ALPHA_INITIAL   | 0.10  | Tasa de aprendizaje inicial                      |
 | QLEARNING_GAMMA           | 0.90  | Factor de descuento (importancia del futuro)     |
 | QLEARNING_EPSILON_INITIAL | 0.20  | Exploracion inicial (20% de decisiones random)   |
 | QLEARNING_EPSILON_MIN     | 0.02  | Exploracion minima (2% siempre explora algo)     |
 | QLEARNING_ALPHA_MIN       | 0.02  | Alpha minimo (nunca deja de aprender del todo)   |
-| QLEARNING_DECAY_PER_TRADE | 0.999 | Decaimiento de epsilon y alpha por trade         |
-| QLEARNING_BACKUP_INTERVAL_HOURS | 6 | Cada cuantas horas hace backup de Q-tables    |
+| QLEARNING_DECAY_PER_TRADE | 0.999 | Decaimiento de exploracion y aprendizaje         |
+| QLEARNING_BACKUP_INTERVAL_HOURS | 6 | Cada cuantas horas hace backup del motor      |
 | QLEARNING_AUTO_PAUSE_WINDOW     | 20 | Ventana de trades para auto-pausa             |
 | QLEARNING_AUTO_PAUSE_WR_RATIO   | 0.7| Win rate minimo antes de auto-pausa           |
 
@@ -88,7 +88,7 @@ TV_ENFORCE_IP_WHITELIST=false
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_CHAT_ID=
 
-# Q-Learning
+# Motor de Decision
 QLEARNING_ENABLED=true
 QLEARNING_ALPHA_INITIAL=0.10
 QLEARNING_GAMMA=0.90

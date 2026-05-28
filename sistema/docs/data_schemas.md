@@ -26,7 +26,7 @@ logs/
 
 ---
 
-## `logs/{id}/trade_log.xlsx`
+## `estrategias/estrategia_{id}/trade_log.xlsx`
 
 Una fila por señal recibida. Las columnas de cierre se pre-llenan como `PENDING`
 al abrir y se actualizan automaticamente al cerrar.
@@ -84,7 +84,7 @@ al abrir y se actualizan automaticamente al cerrar.
 
 ---
 
-## `data/strategies/{id}/q_table.json`
+## `estrategias/estrategia_{id}/actividades/q_table.json`
 
 Q-table persistida. Se actualiza automaticamente tras cada cierre de posicion.
 
@@ -121,7 +121,7 @@ Q-table persistida. Se actualiza automaticamente tras cada cierre de posicion.
 
 ---
 
-## `data/strategies/{id}/qlearning_stats.json`
+## `estrategias/estrategia_{id}/actividades/qlearning_stats.json`
 
 ```json
 {
@@ -136,7 +136,7 @@ Q-table persistida. Se actualiza automaticamente tras cada cierre de posicion.
 
 ---
 
-## `data/strategies/{id}/replay_buffer.jsonl`
+## `estrategias/estrategia_{id}/actividades/replay_buffer.jsonl`
 
 Una experiencia por linea. Se llena tras cada Q-update.
 

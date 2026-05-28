@@ -1,4 +1,4 @@
-# Integracion con Binance Futures — bot3-qlearning
+# Integracion con Binance Futures — bot_ejecutor
 
 ## Arquitectura
 

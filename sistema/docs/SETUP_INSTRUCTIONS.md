@@ -1,4 +1,4 @@
-# Instrucciones de Setup - bot3 Multi-Strategy
+# Instrucciones de Setup — bot_ejecutor
 
 ## Estado actual (2026-05-27)
 
@@ -17,7 +17,7 @@ Sistema operativo con 10 estrategias independientes:
 - Python 3.10+
 - Cuenta Binance con permisos de Futuros habilitados
 - API Key de Binance con permisos de Futuros
-- Archivo `.env` configurado
+- Archivo `sistema/.env` configurado
 - ngrok (para recibir webhooks de TradingView)
 
 ---
@@ -25,8 +25,8 @@ Sistema operativo con 10 estrategias independientes:
 ## Arranque rapido
 
 ```bat
-REM Doble clic:
-start_bot3.bat
+REM Doble clic desde la raiz del proyecto:
+bot_ejecutor.bat
 ```
 
 El bat hace todo automaticamente:
@@ -39,7 +39,7 @@ El bat hace todo automaticamente:
 
 ---
 
-## Configurar `.env`
+## Configurar `sistema/.env`
 
 ```env
 # Binance Futures (requerido)
@@ -61,7 +61,7 @@ TV_ENFORCE_IP_WHITELIST=false
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_CHAT_ID=
 
-# Q-Learning
+# Motor de decision
 QLEARNING_ENABLED=true
 QLEARNING_ALPHA_INITIAL=0.10
 QLEARNING_GAMMA=0.90
@@ -78,7 +78,7 @@ QLEARNING_AUTO_PAUSE_WR_RATIO=0.7
 
 ## URLs de TradingView (produccion)
 
-La misma URL sirve tanto para open como para close — el campo `signal_type` en el body es lo que distingue el tipo de alerta.
+La misma URL sirve para open y close — el campo `signal_type` distingue el tipo de alerta.
 
 ```
 Estrategia 1 (SOLUSDT LIVE):    https://shaft-goliath-shakable.ngrok-free.dev/webhook/strategy/1?secret=mi_secreto_webhook_123
@@ -163,28 +163,6 @@ $body = @{
 
 Invoke-WebRequest -Uri "http://localhost:8001/webhook/strategy/4?secret=mi_secreto_webhook_123" `
     -Method POST -Headers $headers -Body $body
-
-# 6. Test apertura estrategia 2 (SOLUSDT LEARN ONLY — no ejecuta en Binance)
-$body = @{
-    status = "pending"
-    signal = @{
-        symbol      = "SOLUSDT"
-        action      = "buy"
-        signal_type = "open"
-        size        = 0.1
-        params      = @{
-            price          = 93.73
-            regime         = "trend_up"
-            momentum       = "bullish"
-            setup_type     = "breakout"
-            htf_bias       = "bull"
-            trend_strength = "extreme"
-        }
-    }
-} | ConvertTo-Json -Depth 5
-
-Invoke-WebRequest -Uri "http://localhost:8001/webhook/strategy/2?secret=mi_secreto_webhook_123" `
-    -Method POST -Headers $headers -Body $body
 ```
 
 ---
@@ -192,16 +170,16 @@ Invoke-WebRequest -Uri "http://localhost:8001/webhook/strategy/2?secret=mi_secre
 ## Ver resultados
 
 ```powershell
-# Excel de cada estrategia (llenado automaticamente)
-logs\1\trade_log.xlsx   <- estrategia 1 (SOLUSDT / Brecha de medias + D300 — LIVE)
-logs\2\trade_log.xlsx   <- estrategia 2 (SOLUSDT / QLearning 5D — LEARN ONLY)
-logs\3\trade_log.xlsx   <- estrategia 3 (SOLUSDT / Tanque — LEARN ONLY)
-logs\4\trade_log.xlsx   <- estrategia 4 (ETHUSDT / EMA 9-21-200 — LIVE)
+# Excel de cada estrategia (llenado automaticamente al cerrar)
+estrategias\estrategia_1\trade_log.xlsx   <- E1 (SOLUSDT / Brecha + D300 — LIVE)
+estrategias\estrategia_2\trade_log.xlsx   <- E2 (SOLUSDT / 5D — LEARN ONLY)
+estrategias\estrategia_3\trade_log.xlsx   <- E3 (SOLUSDT / Tanque — LEARN ONLY)
+estrategias\estrategia_4\trade_log.xlsx   <- E4 (ETHUSDT / EMA 9-21-200 — LIVE)
 # etc.
 
-# Diario de aprendizaje (actualizado tras cada trade cerrado)
-Get-Content logs\1\INSIGHTS.md
-Get-Content logs\4\INSIGHTS.md
+# INSIGHTS del motor (actualizado tras cada trade cerrado)
+Get-Content estrategias\estrategia_1\INSIGHTS.md
+Get-Content estrategias\estrategia_4\INSIGHTS.md
 
 # Via API
 Invoke-WebRequest http://localhost:8001/api/strategy/1/journal | Select-Object -ExpandProperty Content
@@ -213,7 +191,7 @@ Invoke-WebRequest http://localhost:8001/pending | Select-Object -ExpandProperty 
 
 ---
 
-## Aprendizaje manual (si necesitas corregir resultados)
+## Actualizar motor manualmente (si necesitas corregir resultados)
 
 ```powershell
 # Ver que se procesaria sin hacer nada
@@ -227,7 +205,7 @@ python scripts/learn_from_excel.py 1
 python scripts/learn_from_excel.py 4
 ```
 
-El script lee columna `result` (WIN/LOSS) del Excel y dispara aprendizaje
+El script lee columna `result` (WIN/LOSS) del Excel y actualiza el motor
 para las filas que aun no tienen `learned_at`.
 
 ---
@@ -235,18 +213,18 @@ para las filas que aun no tienen `learned_at`.
 ## Reiniciar y restaurar
 
 ```powershell
-# Reiniciar bot3 (start_bot3.bat lo hace automaticamente)
+# Reiniciar ejecutor (bot_ejecutor.bat lo hace automaticamente)
 taskkill /f /im python.exe
 
-# Restaurar Q-Table de estrategia 1 desde backup
-Copy-Item "data\strategies\1\backups\q_table_20260518_060000.json" `
-          "data\strategies\1\q_table.json"
+# Restaurar motor de estrategia 1 desde backup
+Copy-Item "estrategias\estrategia_1\actividades\backups\q_table_20260518_060000.json" `
+          "estrategias\estrategia_1\actividades\q_table.json"
 
-# Resetear Q-Table de una estrategia (empieza desde cero)
-'{}' | Out-File data\strategies\1\q_table.json -Encoding utf8
+# Resetear motor de una estrategia (empieza desde cero)
+'{}' | Out-File estrategias\estrategia_1\actividades\q_table.json -Encoding utf8
 
-# Borrar Excel para empezar de cero (bot lo recrea automaticamente)
-Remove-Item logs\1\trade_log.xlsx
+# Borrar Excel para empezar de cero (se recrea automaticamente)
+Remove-Item estrategias\estrategia_1\trade_log.xlsx
 ```
 
 ---
@@ -256,5 +234,5 @@ Remove-Item logs\1\trade_log.xlsx
 La API Key debe tener habilitados los permisos de **Futuros** (Futures Trading).
 Sin este permiso, las ordenes fallaran con error de autorizacion.
 
-Con `BINANCE_TESTNET=true` el bot usa la testnet de Binance Futures para pruebas
+Con `BINANCE_TESTNET=true` el ejecutor usa la testnet de Binance Futures para pruebas
 sin dinero real. Requiere una API Key separada generada en testnet.futures.binance.com.
