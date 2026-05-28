@@ -32,7 +32,7 @@ class StrategyWorker(ABC):
     strategy_id: str  # override in subclass
 
     def __init__(self):
-        data_dir = config.strategy_data_dir(self.strategy_id)
+        data_dir = config.strategy_actividades_dir(self.strategy_id)
         self.agent   = QLearningAgent(data_dir=data_dir)
         self.trainer = QLearningTrainer(self.agent, data_dir=data_dir)
         self.journal = LearningJournal(self.strategy_id)

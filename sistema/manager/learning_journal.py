@@ -32,10 +32,10 @@ class LearningJournal:
     """Registra y analiza el aprendizaje del agente para una estrategia."""
 
     def __init__(self, strategy_id: str):
-        self.strategy_id   = strategy_id
-        self._log_dir      = Path(config.strategy_data_dir(strategy_id))
-        self._journal_path = self._log_dir / "learning_journal.jsonl"
-        self._insights_path = self._log_dir / "INSIGHTS.md"   # UN archivo por estrategia
+        self.strategy_id    = strategy_id
+        self._log_dir       = Path(config.strategy_actividades_dir(strategy_id))
+        self._journal_path  = self._log_dir / "learning_journal.jsonl"
+        self._insights_path = Path(config.strategy_data_dir(strategy_id)) / "INSIGHTS.md"
         self._log_dir.mkdir(parents=True, exist_ok=True)
 
     # -------------------------------------------------------------------------

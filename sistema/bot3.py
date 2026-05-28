@@ -64,7 +64,7 @@ poller: Optional[PricePoller] = None
 
 
 def _decision_log_path(strategy_id: str) -> Path:
-    return Path(config.strategy_data_dir(strategy_id)) / "decision_log.jsonl"
+    return Path(config.strategy_actividades_dir(strategy_id)) / "decision_log.jsonl"
 
 
 def _log_decision(entry: dict, strategy_id: str = "qlearning") -> None:
@@ -150,7 +150,7 @@ def _send_to_bot1_and_track(
 
 def _write_event_report(report: dict, strategy_id: str = "qlearning") -> None:
     """Escribe un reporte JSON en logs/{strategy_id}/events/YYYY-MM-DD_HH-MM-SS.json."""
-    events_dir = Path(config.strategy_data_dir(strategy_id)) / "events"
+    events_dir = Path(config.strategy_actividades_dir(strategy_id)) / "events"
     events_dir.mkdir(parents=True, exist_ok=True)
     ts    = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S")
     fpath = events_dir / f"{ts}.json"
@@ -256,7 +256,10 @@ async def lifespan(app: FastAPI):
     _STRATEGY_IDS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]
     for sid in _STRATEGY_IDS:
         Path(config.strategy_data_dir(sid)).mkdir(parents=True, exist_ok=True)
-        (Path(config.strategy_data_dir(sid)) / "events").mkdir(parents=True, exist_ok=True)
+        act = Path(config.strategy_actividades_dir(sid))
+        act.mkdir(parents=True, exist_ok=True)
+        (act / "events").mkdir(parents=True, exist_ok=True)
+        (act / "backups").mkdir(parents=True, exist_ok=True)
 
     logger.info(
         f"Arrancando bot3 - DRY_RUN={config.DRY_RUN}, "

@@ -20,8 +20,13 @@ ESTRATEGIAS_DIR = _ROOT_DIR / "estrategias"
 
 
 def strategy_data_dir(strategy_id: str) -> str:
-    """Retorna la ruta absoluta de datos para una estrategia."""
+    """Retorna la ruta absoluta raiz de una estrategia (INSIGHTS.md y Excel aqui)."""
     return str(ESTRATEGIAS_DIR / f"estrategia_{strategy_id}")
+
+
+def strategy_actividades_dir(strategy_id: str) -> str:
+    """Retorna la ruta de archivos tecnicos (Q-tables, journals, events, backups)."""
+    return str(ESTRATEGIAS_DIR / f"estrategia_{strategy_id}" / "actividades")
 
 # -- Bot3 server ---------------------------------------------------------------
 PORT = int(os.getenv("PORT", "8001"))
