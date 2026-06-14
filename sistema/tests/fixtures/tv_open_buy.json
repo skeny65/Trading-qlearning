@@ -1,0 +1,14 @@
+{
+  "status": "pending",
+  "signal": {
+    "symbol": "SOLUSDT",
+    "action": "buy",
+    "signal_type": "open",
+    "size": 0.1,
+    "params": {
+      "price": 155.20,
+      "sl": 150.00,
+      "tp": 165.00
+    }
+  }
+}

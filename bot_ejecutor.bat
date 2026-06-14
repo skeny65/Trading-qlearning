@@ -1,9 +1,9 @@
 @echo off
 setlocal enabledelayedexpansion
-title Bot3 Q-Learning (:8001)
+title BOT_EJECUTOR v2 (:8001)
 
 REM ============================================================
-REM  Directorio base: carpeta donde esta este .bat -> sistema/
+REM  Directorio base -> sistema/
 REM ============================================================
 cd /d "%~dp0sistema"
 
@@ -20,14 +20,13 @@ if exist ".env" (
 )
 
 REM ============================================================
-REM  Valores por defecto si .env no los tiene
+REM  Valores por defecto
 REM ============================================================
-if "%PORT%"==""              set PORT=8001
-if "%DRY_RUN%"==""           set DRY_RUN=false
-if "%QLEARNING_ENABLED%"=="" set QLEARNING_ENABLED=true
+if "%PORT%"==""    set PORT=8001
+if "%DRY_RUN%"=="" set DRY_RUN=true
 
 REM ============================================================
-REM  Directorio de logs
+REM  Directorios necesarios
 REM ============================================================
 if not exist "logs" mkdir logs
 
@@ -37,101 +36,113 @@ REM ============================================================
 cls
 echo.
 echo  ============================================================
-echo   BOT3 Q-LEARNING  ^|  Trading Signal Agent
+echo   BOT_EJECUTOR v2  ^|  Router de Ejecucion Binance Futures
 echo  ============================================================
 echo.
-echo   Raiz       : %~dp0
-echo   Sistema    : %~dp0sistema
-echo   Puerto     : %PORT%
-echo   DRY_RUN    : %DRY_RUN%
-echo   Q-Learning : %QLEARNING_ENABLED%
-echo   Binance    : Futuros USDT-M (directo)
+echo   Raiz    : %~dp0
+echo   Sistema : %~dp0sistema
+echo   Puerto  : %PORT%
+echo   DRY_RUN : %DRY_RUN%
+echo   Binance : Futuros USDT-M
 echo.
-echo   Estrategias: 1 ^| 2 ^| 3 ^| 4 ^| 5 ^| 6 ^| 7 ^| 8 ^| 9 ^| 10
+echo   Carpetas: 1=TV ^| 2=TV ^| 3=TV ^| 4=TV ^| 5-8=Generico ^| 9=Grid ^| 10=Manager
 echo.
-echo   Endpoints utiles:
-echo     POST  http://localhost:%PORT%/webhook/strategy/{id}
-echo     GET   http://localhost:%PORT%/health
-echo     GET   http://localhost:%PORT%/api/strategies
-echo     GET   http://localhost:%PORT%/api/strategy/{id}/status
-echo     GET   http://localhost:%PORT%/api/strategy/{id}/journal
+echo   Emisores aceptados:
+echo     TradingView ^-^> POST http://localhost:%PORT%/webhook/1   (carpetas 1-4)
+echo     BOT_GRID    ^-^> POST http://localhost:%PORT%/webhook/9
+echo     BOT_MANAGER ^-^> POST http://localhost:%PORT%/webhook/10
+echo.
+echo   Consultas:
+echo     GET http://localhost:%PORT%/health
+echo     GET http://localhost:%PORT%/api/folders
+echo     GET http://localhost:%PORT%/api/metrics
+echo     GET http://localhost:%PORT%/pending
 echo.
 echo  ============================================================
 echo.
 
 REM ============================================================
-REM  1. Verificar Python
+REM  1. Verificar Python 3.10+
 REM ============================================================
 echo [1/4] Verificando Python...
 python --version >nul 2>&1
 if errorlevel 1 (
     echo.
-    echo  ERROR: Python no encontrado. Instala Python 3.10+ y agrega al PATH.
+    echo  ERROR: Python no encontrado en PATH.
+    echo  Descarga: https://www.python.org/downloads/
     echo.
     pause
     exit /b 1
 )
-for /f "tokens=*" %%V in ('python --version 2^>^&1') do echo        %%V
+for /f "tokens=*" %%V in ('python --version 2^>^&1') do echo        %%V ok
 echo.
 
 REM ============================================================
 REM  2. Instalar / actualizar dependencias
 REM ============================================================
-echo [2/4] Instalando dependencias...
+echo [2/4] Instalando dependencias (requirements.txt)...
 python -m pip install -r requirements.txt --quiet --disable-pip-version-check
 if errorlevel 1 (
     echo.
-    echo  ERROR: Fallo al instalar dependencias.
-    echo  Ejecuta manualmente:  pip install -r requirements.txt
+    echo  ERROR: Fallo pip install. Intenta manualmente:
+    echo    pip install -r sistema\requirements.txt
     echo.
     pause
     exit /b 1
 )
-echo        OK - dependencias al dia.
+echo        OK - dependencias instaladas.
 echo.
 
 REM ============================================================
-REM  3. Verificar conexion con Binance
+REM  3. Verificar conectividad con Binance
 REM ============================================================
 echo [3/4] Verificando conectividad con Binance...
-powershell -Command "try { $r = Invoke-WebRequest https://api.binance.com/api/v3/ping -TimeoutSec 5 -UseBasicParsing; Write-Host '       OK - Binance responde' } catch { Write-Host '       AVISO: Sin conexion a Binance - verifica internet/API keys' }"
+powershell -Command "try { Invoke-WebRequest https://api.binance.com/api/v3/ping -TimeoutSec 5 -UseBasicParsing | Out-Null; Write-Host '       OK - Binance accesible' } catch { Write-Host '       AVISO: Binance no responde - verifica conexion/API keys' }"
 echo.
 
 REM ============================================================
-REM  4. Arrancar ngrok en ventana separada (puerto 8001)
+REM  4. Arrancar ngrok en ventana separada
 REM ============================================================
-echo [4/4] Arrancando ngrok en puerto %PORT%...
-start "ngrok Bot3" cmd /k "ngrok http --domain=shaft-goliath-shakable.ngrok-free.dev %PORT%"
-echo        OK - ngrok arrancado en ventana separada.
+echo [4/4] Arrancando ngrok (puerto %PORT%)...
+start "ngrok - BOT_EJECUTOR" cmd /k "ngrok http --domain=shaft-goliath-shakable.ngrok-free.dev %PORT%"
+echo        OK - ngrok arrancando en ventana separada.
+echo        URL publica: https://shaft-goliath-shakable.ngrok-free.dev/webhook/{id}
+echo.
+
+REM ============================================================
+REM  Health Monitor (ventana separada, refresca cada 30s)
+REM ============================================================
+start "Health Monitor - BOT_EJECUTOR" powershell -NoExit -ExecutionPolicy Bypass -File "%~dp0sistema\scripts\health_monitor.ps1" -Port %PORT%
+echo        Health monitor abierto en ventana separada.
 echo.
 
 REM ============================================================
 REM  Loop de auto-restart 24/7
-REM  Si uvicorn cae, espera 5 seg y vuelve a arrancar.
+REM  Si uvicorn cae por error, espera 5s y vuelve a arrancar.
+REM  Ctrl+C detiene limpiamente.
 REM ============================================================
 echo  ============================================================
-echo   Arrancando bot3... (Ctrl+C para detener)
+echo   Iniciando bot_ejecutor... (Ctrl+C para detener)
 echo  ============================================================
 echo.
 
 :restart_loop
-echo  [%time%] Iniciando uvicorn en puerto %PORT%...
+echo  [%time%] Arrancando uvicorn en 0.0.0.0:%PORT%...
 echo.
 
 python -X utf8 -m uvicorn bot3:app --host 0.0.0.0 --port %PORT% --log-level info
 
-REM Si uvicorn termina, evaluar si fue manual o crash
 set _exit=%errorlevel%
 
 if %_exit% EQU 0 (
     echo.
-    echo  [%time%] Bot3 detenido normalmente. Saliendo.
+    echo  [%time%] Bot detenido normalmente. Adios.
     goto :fin
 )
 
 echo.
 echo  ============================================================
-echo   [%time%] Bot3 termino con codigo %_exit%.
+echo   [%time%] Bot termino con error (codigo %_exit%).
 echo   Reiniciando en 5 segundos... (Ctrl+C para cancelar)
 echo  ============================================================
 echo.
@@ -141,7 +152,7 @@ goto :restart_loop
 
 :fin
 echo.
-echo  Bot3 detenido. Revisa los logs en sistema\logs\
+echo  Logs en: sistema\logs\
 echo.
 pause
 endlocal

@@ -1,0 +1,17 @@
+{
+  "id": "5",
+  "emisor": "generico",
+  "enabled": false,
+  "modo_cierre": "una_senal_poller",
+  "coloca_sltp_en_binance": true,
+  "account_type": "futures_usdt",
+  "sizing": {
+    "tipo": "margen_fijo_usdt",
+    "margen_usdt": 5.0,
+    "leverage": 10
+  },
+  "symbols_permitidos": [],
+  "balance_inicial_usdt": 100.0,
+  "binance_live": false,
+  "notas": "Generica. Acepta cualquier simbolo. Cierre por PricePoller (SL/TP cada 60s)."
+}

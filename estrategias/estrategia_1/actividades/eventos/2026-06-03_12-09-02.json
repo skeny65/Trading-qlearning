@@ -1,0 +1,14 @@
+{
+  "ts": "2026-06-03T12:09:02.239506+00:00",
+  "event_id": "20260603_120901313404",
+  "id_carpeta": "1",
+  "tipo": "close",
+  "symbol": "ETHUSDT",
+  "close_price": 1876.74,
+  "pnl_pct": 0.02,
+  "close_reason": "se\u00f1al_close",
+  "duration_min": 2.9799595666666665,
+  "resultado": "WIN",
+  "order_id": "8389766195546567130",
+  "mode": "LIVE"
+}

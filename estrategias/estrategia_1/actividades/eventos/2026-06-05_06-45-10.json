@@ -1,0 +1,14 @@
+{
+  "ts": "2026-06-05T06:45:10.640222+00:00",
+  "event_id": "20260605_064506755046",
+  "id_carpeta": "1",
+  "tipo": "close",
+  "symbol": "BTCUSDT",
+  "close_price": 61653.38,
+  "pnl_pct": 0.6919,
+  "close_reason": "sl_tp_atr",
+  "duration_min": 0.0,
+  "resultado": "WIN",
+  "order_id": "20260605_064506755046",
+  "mode": "LIVE"
+}

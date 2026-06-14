@@ -1,0 +1,15 @@
+{
+  "status": "pending",
+  "signal": {
+    "symbol": "SOLUSDT",
+    "action": "close_buy",
+    "signal_type": "close",
+    "size": 0.1,
+    "params": {
+      "price": 165.00,
+      "entry_price": 155.20,
+      "pnl_pct": 6.31,
+      "close_reason": "Cruce contrario"
+    }
+  }
+}

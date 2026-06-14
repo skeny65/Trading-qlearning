@@ -1,102 +1,65 @@
-# Variables de Entorno — bot_ejecutor
+# Variables de Entorno — bot_ejecutor v2
 
-Archivo: `.env` en la raiz del proyecto.
-
----
-
-## Binance Futures (requerido)
-
-| Variable             | Valor actual | Descripcion                                          |
-|----------------------|--------------|------------------------------------------------------|
-| BINANCE_API_KEY      | (tu key)     | API Key de Binance — requiere permisos de Futuros    |
-| BINANCE_API_SECRET   | (tu secret)  | API Secret de Binance                                |
-| BINANCE_TESTNET      | false        | `true` = usar testnet (paper trading)                |
-| BINANCE_LEVERAGE     | 25           | Apalancamiento para todas las ordenes                |
-| BINANCE_MAX_MARGIN_PCT | 0.95       | % del balance disponible a usar (0.95 = 95%). 0.99 causa error "Margin is insufficient" por fees |
-
-**Nota:** El bot consulta el balance en vivo antes de cada trade y usa el 95% del disponible.
-No hay margen fijo — es siempre todo el balance con efecto compuesto automatico.
+Archivo: `sistema/.env` (copiar de `.env.example`).
 
 ---
 
 ## Servidor
 
-| Variable        | Valor  | Descripcion                              |
-|-----------------|--------|------------------------------------------|
-| PORT            | 8001   | Puerto del servidor FastAPI              |
-| DRY_RUN         | false  | `true` = simula sin enviar ordenes reales|
+| Variable | Default | Descripcion                      |
+|----------|---------|----------------------------------|
+| PORT     | 8001    | Puerto del servidor FastAPI       |
+| DRY_RUN  | true    | Si true, simula sin ejecutar en Binance |
 
 ---
 
-## TradingView Webhook
+## Seguridad webhook
 
-| Variable                | Valor                  | Descripcion                              |
-|-------------------------|------------------------|------------------------------------------|
-| TV_WEBHOOK_SECRET       | mi_secreto_webhook_123 | Secret que TradingView envia en la alerta|
-| TV_ENFORCE_IP_WHITELIST | false                  | `true` = solo acepta IPs de TradingView  |
-| TV_ALLOWED_IPS          | (IPs oficiales TV)     | Lista de IPs permitidas                  |
+| Variable                  | Default | Descripcion                                  |
+|--------------------------|---------|----------------------------------------------|
+| TV_WEBHOOK_SECRET        | (vacio) | Secret que TradingView envia en el header    |
+| TV_ENFORCE_IP_WHITELIST  | false   | Si true, solo acepta IPs de TradingView      |
+| TV_ALLOWED_IPS           | (vacio) | IPs permitidas (coma-separadas)              |
+
+IPs de TradingView: `52.89.214.238, 34.212.75.30, 54.218.53.128, 52.32.178.7`
+
+---
+
+## Binance Futures
+
+| Variable                   | Default | Descripcion                              |
+|---------------------------|---------|------------------------------------------|
+| BINANCE_API_KEY           |         | API key de Binance Futures USDT-M        |
+| BINANCE_API_SECRET        |         | API secret de Binance Futures USDT-M     |
+| BINANCE_TESTNET           | true    | Usar testnet de Binance                  |
+| BINANCE_DEFAULT_LEVERAGE  | 10      | Leverage cuando config.json no lo define |
+| BINANCE_DEFAULT_MARGIN_USDT| 5.0   | Margen USDT cuando config.json no lo define |
+| BINANCE_MAX_MARGIN_PCT    | 0.95    | Cap de seguridad: margen / balance libre |
 
 ---
 
 ## Telegram (opcional)
 
-| Variable           | Valor | Descripcion                    |
-|--------------------|-------|--------------------------------|
-| TELEGRAM_BOT_TOKEN | -     | Token del bot de Telegram      |
-| TELEGRAM_CHAT_ID   | -     | Chat ID para notificaciones    |
+| Variable          | Default | Descripcion             |
+|------------------|---------|-------------------------|
+| TELEGRAM_BOT_TOKEN | (vacio) | Token del bot          |
+| TELEGRAM_CHAT_ID   | (vacio) | Chat/grupo destino     |
 
-Si no se configuran, las notificaciones se omiten silenciosamente.
-
----
-
-## Motor de Decision (ejecutor)
-
-| Variable                  | Valor | Descripcion                                      |
-|---------------------------|-------|--------------------------------------------------|
-| QLEARNING_ENABLED         | true  | `false` = desactiva el motor de decision         |
-| QLEARNING_ALPHA_INITIAL   | 0.10  | Tasa de aprendizaje inicial                      |
-| QLEARNING_GAMMA           | 0.90  | Factor de descuento (importancia del futuro)     |
-| QLEARNING_EPSILON_INITIAL | 0.20  | Exploracion inicial (20% de decisiones random)   |
-| QLEARNING_EPSILON_MIN     | 0.02  | Exploracion minima (2% siempre explora algo)     |
-| QLEARNING_ALPHA_MIN       | 0.02  | Alpha minimo (nunca deja de aprender del todo)   |
-| QLEARNING_DECAY_PER_TRADE | 0.999 | Decaimiento de exploracion y aprendizaje         |
-| QLEARNING_BACKUP_INTERVAL_HOURS | 6 | Cada cuantas horas hace backup del motor      |
-| QLEARNING_AUTO_PAUSE_WINDOW     | 20 | Ventana de trades para auto-pausa             |
-| QLEARNING_AUTO_PAUSE_WR_RATIO   | 0.7| Win rate minimo antes de auto-pausa           |
+Si ambos estan vacios, las notificaciones se desactivan silenciosamente.
 
 ---
 
-## Configuracion completa de ejemplo
+## Sizing por carpeta
 
-```env
-# Binance Futures
-BINANCE_API_KEY=tu_api_key_aqui
-BINANCE_API_SECRET=tu_api_secret_aqui
-BINANCE_TESTNET=false
-BINANCE_LEVERAGE=25
-BINANCE_MAX_MARGIN_PCT=0.95
+El sizing se define en `estrategias/estrategia_{id}/config.json`, no en `.env`.
+Las variables `BINANCE_DEFAULT_*` solo aplican si el config.json de la carpeta no las define.
 
-# Servidor
-PORT=8001
-DRY_RUN=false
-
-# TradingView
-TV_WEBHOOK_SECRET=mi_secreto_webhook_123
-TV_ENFORCE_IP_WHITELIST=false
-
-# Telegram (opcional)
-TELEGRAM_BOT_TOKEN=
-TELEGRAM_CHAT_ID=
-
-# Motor de Decision
-QLEARNING_ENABLED=true
-QLEARNING_ALPHA_INITIAL=0.10
-QLEARNING_GAMMA=0.90
-QLEARNING_EPSILON_INITIAL=0.20
-QLEARNING_EPSILON_MIN=0.02
-QLEARNING_ALPHA_MIN=0.02
-QLEARNING_DECAY_PER_TRADE=0.999
-QLEARNING_BACKUP_INTERVAL_HOURS=6
-QLEARNING_AUTO_PAUSE_WINDOW=20
-QLEARNING_AUTO_PAUSE_WR_RATIO=0.7
+```json
+{
+  "sizing": {
+    "tipo": "margen_fijo_usdt",
+    "margen_usdt": 5.0,
+    "leverage": 10
+  }
+}
 ```

@@ -1,0 +1,23 @@
+{
+  "id": "9",
+  "emisor": "bot_grid",
+  "enabled": true,
+  "modo_cierre": "bot_grid",
+  "coloca_sltp_en_binance": false,
+  "account_type": "futures_usdt",
+  "sizing": {
+    "tipo": "margen_fijo_usdt",
+    "margen_usdt": 5.0,
+    "leverage": 10
+  },
+  "symbols_permitidos": [],
+  "balance_inicial_usdt": 200.0,
+  "binance_live": false,
+  "bot_grid_config": {
+    "audit_log_path": "C:/Users/kenyb/Desktop/BOT_EJECUTOR/Bot_Grid/logs/signals",
+    "polling_interval_seconds": 2,
+    "expected_version": "2.0",
+    "max_signal_age_seconds": 60
+  },
+  "notas": "BOT_GRID. Acepta cualquier simbolo. Cierre gestionado por BotGridPoller (audit.jsonl cada 2s)."
+}

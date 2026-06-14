@@ -1,0 +1,21 @@
+{
+  "id": "1",
+  "emisor": "tradingview",
+  "enabled": true,
+  "modo_cierre": "trailing_stop",
+  "coloca_sltp_en_binance": false,
+  "account_type": "futures_usdt",
+  "sizing": {
+    "tipo": "pct_balance",
+    "pct": 95,
+    "leverage": 25
+  },
+  "trailing_stop": {
+    "enabled": true,
+    "risk_pct": 10.0
+  },
+  "symbols_permitidos": [],
+  "balance_inicial_usdt": 314.66,
+  "binance_live": true,
+  "notas": "TradingView LIVE. 95% balance como margen, 5x leverage. Trailing stop auto al 10% de riesgo del balance (~2.1% callback)."
+}

@@ -1,0 +1,14 @@
+{
+  "ts": "2026-06-03T08:55:22.254493+00:00",
+  "event_id": "20260603_085521654000",
+  "id_carpeta": "1",
+  "tipo": "close",
+  "symbol": "SOLUSDT",
+  "close_price": 75.01,
+  "pnl_pct": 0.0,
+  "close_reason": "se\u00f1al_close",
+  "duration_min": 2.56405435,
+  "resultado": "LOSS",
+  "order_id": "20260603_085245235332",
+  "mode": "LIVE"
+}

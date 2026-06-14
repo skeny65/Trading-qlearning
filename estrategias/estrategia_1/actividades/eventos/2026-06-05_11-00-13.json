@@ -1,0 +1,57 @@
+{
+  "timestamp_utc": "2026-06-05T11:00:13.092185+00:00",
+  "event_id": "20260605_110010774586",
+  "id_carpeta": "1",
+  "emisor": "tradingview",
+  "mode": "LIVE",
+  "symbol": "BTCUSDT",
+  "side": "sell",
+  "sl": 63146.4631,
+  "tp": 61927.2769,
+  "margen_usdt": 12.8,
+  "leverage": 25,
+  "order_id": "1031760045934",
+  "binance_status": "ok",
+  "balance_antes": 61.2354,
+  "fecha": "2026-06-05",
+  "hora_utc": "11:00:13",
+  "notional_usdt": 320.0,
+  "precio_entrada": 62536.87,
+  "precio_salida": "PENDING",
+  "duracion_min": "PENDING",
+  "resultado": "PENDING",
+  "profit_usdt": "PENDING",
+  "balance_despues": "PENDING",
+  "signal": {
+    "id_carpeta": "1",
+    "tipo": "open",
+    "symbol": "BTCUSDT",
+    "side": "sell",
+    "price": 62536.87,
+    "sl": 63146.4631,
+    "tp": 61927.2769,
+    "sl_distance": null,
+    "risk_pct": null,
+    "entry_price": null,
+    "pnl_pct": null,
+    "close_reason": null,
+    "raw": {
+      "status": "pending",
+      "signal": {
+        "symbol": "BTCUSDT",
+        "action": "sell",
+        "signal_type": "open",
+        "strategy_id": "eth_ema200",
+        "params": {
+          "price": 62536.87,
+          "sl": 63146.4631,
+          "tp": 61927.2769,
+          "atr": 406.3954,
+          "rsi": 46.69
+        }
+      },
+      "bar_time": 1780656300000
+    }
+  },
+  "ts": "2026-06-05T11:00:13.215735+00:00"
+}

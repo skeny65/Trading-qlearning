@@ -1,173 +1,217 @@
-# Bot3 - Q-Learning Trading Bot (Multi-Strategy)
+# bot_ejecutor v2
 
-## Estado: OPERATIVO (2026-05-09)
+## Estado: OPERATIVO — DRY_RUN (2026-05-28)
 
-Trading bot que recibe alertas de **TradingView** y usa agentes **Q-Learning independientes**
-por estrategia para decidir autonomamente si ejecutar, reducir, ignorar o invertir cada senal.
-
-El sistema aprende solo: el **Price Poller** (Binance API) detecta cuando cada posicion toca
-TP o SL, actualiza la Q-table automaticamente, y llena el Excel con WIN/LOSS sin intervencion humana.
-
-## Arquitectura
+Router de ejecucion puro. Recibe señales de TradingView, BOT_GRID y BOT_MANAGER y ejecuta
+ordenes directamente en **Binance Futures USDT-M**. Sin decision propia — si llega open, abre; si llega close, cierra.
 
 ```
-TradingView (.pine)
-    |
-    |  POST /webhook/strategy/{id}
-    v
-bot3 (localhost:8001)
-    |
-    +-- StrategyRegistry
-    |     |-- ApuestaWorker   (state 3D: 27 estados)
-    |     |-- QLearningWorker (state 5D: 243 estados)
-    |     +-- TanqueWorker    (state 3D: 27 estados)
-    |
-    |-- Excel por estrategia: logs/{id}/trade_log.xlsx
-    |
-    |  POST /webhook/bot3  (opcional, si bot1 esta corriendo)
-    v
-bot1 (localhost:8000)  -- Ejecuta en Alpaca
-
-PricePoller (hilo independiente, cada 60s)
-    |-- GET https://api.binance.com/api/v3/ticker/price
-    |-- Detecta TP/SL
-    |-- Actualiza Q-table automaticamente
-    +-- Llena Excel: result=WIN/LOSS, pnl_notes, learned_at
+TradingView  → POST /webhook/1-4
+BOT_GRID     → JSONL polling (audit.jsonl cada 2s) + fallback /webhook/9
+BOT_MANAGER  → POST /signal  (protocolo v2.0)
+                    │
+                    ▼
+          bot_ejecutor (:8001)
+                    │
+                    ▼
+          Binance Futures USDT-M
 ```
 
-## Estrategias
-
-| ID         | Estado  | State space        | Descripcion                          |
-|------------|---------|--------------------|--------------------------------------|
-| qlearning  | Activa  | 5D - 243 estados   | regime, momentum, setup, htf, trend  |
-| apuesta    | Activa  | 3D - 27 estados    | price_zone, rr_level, hour_zone      |
-| tanque     | Activa  | 3D - 27 estados    | entry_strength, bar_zone, pattern    |
+---
 
 ## Arranque rapido
 
-```bat
-start_bot3.bat
+```bash
+# Opcion A — Launcher (abre los 3 bots + ngrok + monitor)
+start_all.bat          # en la raiz de BOT_EJECUTOR
+
+# Opcion B — Solo ejecutor
+cd sistema
+pip install -r requirements.txt
+cp .env.example .env   # editar keys
+python bot3.py
 ```
 
-Hace todo: verifica Python, instala deps, abre ngrok, arranca uvicorn con auto-restart 24/7.
+---
 
-## Excel automatico
+## Carpetas (1-10)
 
-Cada estrategia tiene su propio Excel en `logs/{id}/trade_log.xlsx`.
-El bot escribe una fila por cada alerta. El Price Poller llena automaticamente:
+| ID | Emisor       | Estado   | Cierre           | Simbolos    | Binance | Balance |
+|----|-------------|----------|------------------|-------------|---------|---------|
+| 1  | tradingview | ENABLED  | dos_senales (TV) | CUALQUIERA  | OFF     | 100 USDT |
+| 2  | tradingview | disabled | dos_senales (TV) | CUALQUIERA  | OFF     | 100 USDT |
+| 3  | tradingview | disabled | dos_senales (TV) | CUALQUIERA  | OFF     | 100 USDT |
+| 4  | tradingview | ENABLED  | dos_senales (TV) | CUALQUIERA  | OFF     | 100 USDT |
+| 5  | generico    | disabled | una_senal_poller | CUALQUIERA  | OFF     | 100 USDT |
+| 6  | generico    | disabled | una_senal_poller | CUALQUIERA  | OFF     | 100 USDT |
+| 7  | generico    | disabled | una_senal_poller | CUALQUIERA  | OFF     | 100 USDT |
+| 8  | generico    | disabled | una_senal_poller | CUALQUIERA  | OFF     | 100 USDT |
+| 9  | bot_grid    | ENABLED  | bot_grid         | CUALQUIERA  | OFF     | 200 USDT |
+| 10 | bot_manager | ENABLED  | bot_manager      | CUALQUIERA  | OFF     | 100 USDT |
 
-| Columna    | Quien la llena | Contenido ejemplo                           |
-|------------|----------------|---------------------------------------------|
-| result     | Price Poller   | `WIN` o `LOSS`                              |
-| pnl_notes  | Price Poller   | `+1.45% \| TP_HIT \| 47min \| R=2.34x`     |
-| learned_at | Price Poller   | `2026-05-09T15:10:00Z`                      |
+**Simbolos**: Cada carpeta acepta cualquier par — el emisor decide el simbolo.
+**Binance OFF/ON**: controlado por `binance_live` en cada `config.json` (hot-reload, sin reinicio).
 
-Para forzar aprendizaje desde Excel (si quieres corregir algun resultado):
+---
+
+## Config por carpeta
+
+Cada carpeta tiene su `estrategias/estrategia_{id}/config.json`:
+
+```json
+{
+  "id": "1",
+  "emisor": "tradingview",
+  "enabled": true,
+  "modo_cierre": "dos_senales",
+  "coloca_sltp_en_binance": false,
+  "account_type": "futures_usdt",
+  "sizing": {
+    "tipo": "margen_fijo_usdt",
+    "margen_usdt": 5.0,
+    "leverage": 10
+  },
+  "symbols_permitidos": [],
+  "balance_inicial_usdt": 100.0,
+  "binance_live": false,
+  "notas": ""
+}
+```
+
+| Campo | Descripcion |
+|-------|-------------|
+| `enabled` | Recibe y procesa señales |
+| `binance_live` | `true` = ejecuta en Binance real / `false` = simula (hot-reload) |
+| `balance_inicial_usdt` | Capital inicial para tracking de balance |
+| `symbols_permitidos` | Lista de simbolos permitidos. `[]` = acepta cualquier simbolo |
+| `sizing.margen_usdt` | USDT de margen por operacion |
+| `sizing.leverage` | Apalancamiento |
+
+---
+
+## Endpoints
+
+| Metodo | Ruta | Descripcion |
+|--------|------|-------------|
+| GET | `/` | Health check rapido |
+| GET | `/health` | Estado completo + bot_grid + bot_manager |
+| POST | `/webhook/{1-10}` | Señal TradingView / BOT_GRID (fallback) |
+| POST | `/signal` | Señal BOT_MANAGER / BOT_GRID (protocolo v2.0) |
+| GET | `/api/folders` | Config y posiciones de todas las carpetas |
+| GET | `/api/folder/{id}/status` | Config + posiciones de una carpeta |
+| GET | `/api/folder/{id}/metrics` | Winrate, PnL, balance |
+| GET | `/api/metrics` | Consolidado global |
+| GET | `/pending` | Posiciones monitoreadas por PricePoller |
+
+---
+
+## Formato señal TradingView (carpetas 1-4)
+
+```json
+{
+  "status": "pending",
+  "signal": {
+    "symbol": "SOLUSDT",
+    "action": "buy",
+    "signal_type": "open",
+    "params": { "price": 155.20, "sl": 150.00, "tp": 165.00 }
+  }
+}
+```
+
+Cierre: segunda alerta con `signal_type: "close"` desde TradingView.
+
+---
+
+## Estructura
+
+```
+Bot_Ejecutor/
+  bot_ejecutor.bat              ← arranca uvicorn + ngrok + monitor
+  estrategias/
+    estrategia_{1-10}/
+      config.json               ← emisor, sizing, binance_live, balance_inicial_usdt
+      trade_log_YYYY_MM.xlsx    ← Excel mensual (nuevo archivo cada mes)
+      actividades/
+        balance.json            ← balance USDT acumulado (persiste entre reinicios)
+        senales_recibidas.jsonl ← toda señal recibida (incluye disabled)
+        ejecuciones.jsonl       ← toda ejecucion open/close
+        eventos/{ts}.json       ← un JSON por evento
+
+  sistema/
+    bot3.py                     ← FastAPI app principal
+    config.py                   ← variables de entorno
+    core/
+      binance_executor.py       ← MARKET open/close/grid en Binance Futures
+      folder_config.py          ← carga config.json por carpeta
+      adapters/                 ← parsers por emisor (tv, grid, manager, generico)
+    manager/
+      price_poller.py           ← monitorea TP/SL (60s) para carpetas poller
+      bot_grid_poller.py        ← lee audit.jsonl de BOT_GRID (2s)
+      metrics.py                ← calcula winrate / pnl
+    utils/
+      excel_logger.py           ← escribe trade_log_YYYY_MM.xlsx (mensual)
+      balance_tracker.py        ← gestiona balance USDT por carpeta
+      logger.py
+    sender/
+      telegram_notifier.py
+    scripts/
+      health_monitor.ps1        ← monitor visual en consola (refresca 15s)
+```
+
+---
+
+## Excel mensual
+
+Cada cierre de mes genera un nuevo archivo `trade_log_YYYY_MM.xlsx`.
+El primer trade del mes hereda el balance final del mes anterior (fila amarilla inicial).
+
+Columnas: `fecha`, `hora_utc`, `symbol`, `side`, `precio_entrada`, `precio_salida`,
+`duracion_min`, `resultado`, `pnl_pct`, `profit_usdt`, `balance_antes`, `balance_despues`.
+
+---
+
+## Variables de entorno (.env)
+
+| Variable | Default | Descripcion |
+|----------|---------|-------------|
+| `DRY_RUN` | `true` | Freno global — sobreescribe binance_live de todas las carpetas |
+| `TV_WEBHOOK_SECRET` | — | Secret compartido con todos los emisores |
+| `BINANCE_API_KEY` | — | API key Binance Futures USDT-M |
+| `BINANCE_API_SECRET` | — | API secret Binance Futures USDT-M |
+| `BINANCE_TESTNET` | `false` | Testnet de Binance |
+| `BINANCE_DEFAULT_LEVERAGE` | `10` | Leverage por defecto si config.json no lo define |
+| `BINANCE_DEFAULT_MARGIN_USDT` | `5.0` | Margen por defecto |
+| `PORT` | `8001` | Puerto del servidor FastAPI |
+
+---
+
+## Ir a LIVE (por estrategia)
+
+1. En `estrategias/estrategia_{id}/config.json`: `"binance_live": true`
+2. En `sistema/.env`: `DRY_RUN=false`, `BINANCE_TESTNET=false`
+3. Verificar API keys de Binance Futures con permiso de trading
+4. Reiniciar bot — confirmar con `GET /health`
+
+El cambio de `binance_live` en `config.json` es **hot-reload** (sin reinicio).
+El cambio de `DRY_RUN` en `.env` requiere reinicio del bot.
+
+---
+
+## Health Monitor
+
 ```powershell
-python scripts/learn_from_excel.py
+.\sistema\scripts\health_monitor.ps1
 ```
 
-## Endpoints principales
+Muestra cada 15s: estado del ejecutor, carpeta 1 + ngrok, Bot_Grid, Bot_Manager,
+resultados globales (trades, wins, losses, PnL, balance total).
 
-| Metodo | Endpoint                          | Descripcion                              |
-|--------|-----------------------------------|------------------------------------------|
-| GET    | /health                           | Estado completo (strategies, poller)     |
-| POST   | /webhook/strategy/{id}            | Recibir alertas de TradingView           |
-| GET    | /api/strategies                   | Listar todas las estrategias             |
-| GET    | /api/strategy/{id}/status         | Estado del agente                        |
-| POST   | /api/strategy/{id}/pause          | Pausar agente                            |
-| POST   | /api/strategy/{id}/resume         | Reanudar agente                          |
-| POST   | /api/strategy/{id}/update         | Aprendizaje manual                       |
-| GET    | /api/strategy/{id}/journal        | Resumen del diario de aprendizaje        |
-| GET    | /api/strategy/{id}/journal/report | Ver INSIGHTS.md                          |
-| GET    | /pending                          | Posiciones monitoreadas por Price Poller |
+---
 
-## Verificar que funciona
+## Tests
 
-```powershell
-# Health check
-Invoke-WebRequest http://localhost:8001/health | Select-Object -ExpandProperty Content
-
-# Estado de todas las estrategias
-Invoke-WebRequest http://localhost:8001/api/strategies | Select-Object -ExpandProperty Content
-
-# Diario de aprendizaje
-Invoke-WebRequest http://localhost:8001/api/strategy/qlearning/journal | Select-Object -ExpandProperty Content
-
-# Ver Excel actualizado
-# Abrir: logs\qlearning\trade_log.xlsx
-
-# Ver INSIGHTS.md
-Get-Content logs\qlearning\INSIGHTS.md
+```bash
+cd sistema
+pytest tests/test_ejecutor.py -v
 ```
-
-## Configuracion minima (.env)
-
-```env
-BOT1_WEBHOOK_URL=http://127.0.0.1:8000/webhook/bot3
-BOT1_WEBHOOK_SECRET=a_secure_bot3_secret
-TV_WEBHOOK_SECRET=mi_secreto_webhook_123
-DRY_RUN=false
-PORT=8001
-```
-
-## Estructura del proyecto
-
-```
-bot3.py                               FastAPI entrypoint
-config.py                             Variables de entorno
-start_bot3.bat                        Launcher 24/7 con auto-restart
-requirements.txt
-.env / .env.example
-
-core/
-  qlearning_agent.py                 Q-Table, epsilon-greedy, Bellman
-  strategy_worker.py                 Clase base abstracta
-  strategy_registry.py               Singleton con todos los workers
-  reward_calculator.py               Formula de recompensa
-  tv_signal_parser.py                Parser del envelope TradingView
-
-strategies/
-  apuesta/worker.py                  Estrategia Apuesta (3D)
-  qlearning/worker.py                Estrategia QLearning (5D)
-  tanque/worker.py                   Estrategia Tanque (3D)
-
-manager/
-  qlearning_trainer.py               Replay buffer, backups
-  price_poller.py                    Monitor Binance cada 60s -> Excel automatico
-  learning_journal.py                Diario de aprendizaje -> INSIGHTS.md
-
-utils/
-  excel_logger.py                    Excel por estrategia (write + update result)
-
-sender/
-  webhook_client.py                  POST a bot1 con retry
-  signal_formatter.py                Payload para bot1
-  telegram_notifier.py               Notificaciones Telegram
-
-scripts/
-  learn_from_excel.py                Leer WIN/LOSS del Excel -> aprendizaje manual
-
-data/strategies/{id}/                Q-table, stats, replay, backups (por estrategia)
-state/{id}/decision_log.jsonl        Historial de decisiones (por estrategia)
-logs/{id}/
-  trade_log.xlsx                     Excel con resultados automaticos
-  INSIGHTS.md                        Resumen de aprendizaje
-  learning_journal.jsonl             Registro detallado por Q-update
-  events/                            Reporte JSON por evento
-
-docs/                                Documentacion completa
-tests/                               Tests unitarios
-```
-
-## Documentacion
-
-- [Instrucciones de setup](docs/SETUP_INSTRUCTIONS.md)
-- [Arquitectura](docs/architecture.md)
-- [Flujo end-to-end](docs/end_to_end_flow.md)
-- [Estrategia Q-Learning](docs/qlearning_strategy.md)
-- [API Reference](docs/api_reference.md)
-- [Formato Webhook](docs/webhook_format.md)
-- [Schemas de datos](docs/data_schemas.md)
-- [Variables de entorno](docs/environment_variables.md)
-- [Integracion con bot1](docs/integration_bot1.md)

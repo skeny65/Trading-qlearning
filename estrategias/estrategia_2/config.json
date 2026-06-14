@@ -1,0 +1,17 @@
+{
+  "id": "2",
+  "emisor": "tradingview",
+  "enabled": false,
+  "modo_cierre": "dos_senales",
+  "coloca_sltp_en_binance": false,
+  "account_type": "futures_usdt",
+  "sizing": {
+    "tipo": "margen_fijo_usdt",
+    "margen_usdt": 5.0,
+    "leverage": 10
+  },
+  "symbols_permitidos": [],
+  "balance_inicial_usdt": 100.0,
+  "binance_live": false,
+  "notas": "TradingView. Acepta cualquier simbolo. Cierre por segunda alerta TV (signal_type=close)."
+}

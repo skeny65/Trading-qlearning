@@ -1,0 +1,52 @@
+{
+  "timestamp_utc": "2026-06-03T11:49:03.332503+00:00",
+  "event_id": "20260603_114900786760",
+  "id_carpeta": "1",
+  "emisor": "tradingview",
+  "mode": "LIVE",
+  "symbol": "ETHUSDT",
+  "side": "sell",
+  "sl": 1879.8431,
+  "tp": 1874.4482,
+  "margen_usdt": 265.91,
+  "leverage": 25,
+  "order_id": "8389766195535254627",
+  "binance_status": "ok",
+  "balance_antes": 88.8729,
+  "fecha": "2026-06-03",
+  "hora_utc": "11:49:03",
+  "notional_usdt": 6647.75,
+  "precio_entrada": 1877.82,
+  "precio_salida": "PENDING",
+  "duracion_min": "PENDING",
+  "resultado": "PENDING",
+  "profit_usdt": "PENDING",
+  "balance_despues": "PENDING",
+  "signal": {
+    "id_carpeta": "1",
+    "tipo": "open",
+    "symbol": "ETHUSDT",
+    "side": "sell",
+    "price": 1877.82,
+    "sl": 1879.8431,
+    "tp": 1874.4482,
+    "entry_price": null,
+    "pnl_pct": null,
+    "close_reason": null,
+    "raw": {
+      "status": "pending",
+      "signal": {
+        "symbol": "ETHUSDT",
+        "action": "sell",
+        "signal_type": "open",
+        "size": 0.1,
+        "params": {
+          "price": 1877.82,
+          "sl": 1879.8431,
+          "tp": 1874.4482
+        }
+      }
+    }
+  },
+  "ts": "2026-06-03T11:49:03.401539+00:00"
+}

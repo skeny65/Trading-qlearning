@@ -1,0 +1,17 @@
+{
+  "id": "10",
+  "emisor": "bot_manager",
+  "enabled": true,
+  "modo_cierre": "bot_manager",
+  "coloca_sltp_en_binance": false,
+  "account_type": "futures_usdt",
+  "sizing": {
+    "tipo": "margen_fijo_usdt",
+    "margen_usdt": 5.0,
+    "leverage": 10
+  },
+  "symbols_permitidos": [],
+  "balance_inicial_usdt": 100.0,
+  "binance_live": false,
+  "notas": "BOT_MANAGER. Acepta cualquier simbolo. Cierre por señal CLOSE via POST /signal."
+}

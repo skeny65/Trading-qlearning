@@ -1,0 +1,52 @@
+{
+  "timestamp_utc": "2026-06-14T08:16:56.994972+00:00",
+  "event_id": "20260614_081654230798",
+  "id_carpeta": "1",
+  "emisor": "tradingview",
+  "mode": "LIVE",
+  "symbol": "BTCUSDT",
+  "side": "buy",
+  "sl": "",
+  "tp": "",
+  "margen_usdt": 13.49,
+  "leverage": 25,
+  "order_id": "1041486711074",
+  "binance_status": "ok",
+  "balance_antes": 65.3433,
+  "fecha": "2026-06-14",
+  "hora_utc": "08:16:56",
+  "notional_usdt": 337.25,
+  "precio_entrada": 64480.1,
+  "precio_salida": "PENDING",
+  "duracion_min": "PENDING",
+  "resultado": "PENDING",
+  "profit_usdt": "PENDING",
+  "balance_despues": "PENDING",
+  "signal": {
+    "id_carpeta": "1",
+    "tipo": "open",
+    "symbol": "BTCUSDT",
+    "side": "buy",
+    "price": 64480.1,
+    "sl": null,
+    "tp": null,
+    "sl_distance": null,
+    "risk_pct": null,
+    "entry_price": null,
+    "pnl_pct": null,
+    "close_reason": null,
+    "raw": {
+      "status": "pending",
+      "signal": {
+        "symbol": "BTCUSDT",
+        "action": "buy",
+        "signal_type": "open",
+        "strategy_id": "1",
+        "params": {
+          "price": 64480.1
+        }
+      }
+    }
+  },
+  "ts": "2026-06-14T08:16:57.116652+00:00"
+}

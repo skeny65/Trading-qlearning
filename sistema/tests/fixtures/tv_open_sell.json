@@ -1,0 +1,14 @@
+{
+  "status": "pending",
+  "signal": {
+    "symbol": "BTCUSDT",
+    "action": "sell",
+    "signal_type": "open",
+    "size": 0.1,
+    "params": {
+      "price": 67000.00,
+      "sl": 68500.00,
+      "tp": 64000.00
+    }
+  }
+}

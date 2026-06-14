@@ -1,0 +1,51 @@
+{
+  "timestamp_utc": "2026-06-03T08:52:48.352928+00:00",
+  "event_id": "20260603_085245235332",
+  "id_carpeta": "1",
+  "emisor": "tradingview",
+  "mode": "LIVE",
+  "symbol": "SOLUSDT",
+  "side": "buy",
+  "sl": 73.0,
+  "tp": 78.5,
+  "margen_usdt": 298.93,
+  "leverage": 25,
+  "order_id": "20260603_085245235332",
+  "binance_status": "skip",
+  "balance_antes": 100.0,
+  "fecha": "2026-06-03",
+  "hora_utc": "08:52:48",
+  "notional_usdt": 7473.25,
+  "precio_entrada": 75.01,
+  "precio_salida": "PENDING",
+  "duracion_min": "PENDING",
+  "resultado": "PENDING",
+  "profit_usdt": "PENDING",
+  "balance_despues": "PENDING",
+  "signal": {
+    "id_carpeta": "1",
+    "tipo": "open",
+    "symbol": "SOLUSDT",
+    "side": "buy",
+    "price": 75.01,
+    "sl": 73.0,
+    "tp": 78.5,
+    "entry_price": null,
+    "pnl_pct": null,
+    "close_reason": null,
+    "raw": {
+      "signal": {
+        "params": {
+          "price": 75.01,
+          "sl": 73,
+          "tp": 78.5
+        },
+        "signal_type": "open",
+        "symbol": "SOLUSDT",
+        "action": "buy"
+      },
+      "status": "pending"
+    }
+  },
+  "ts": "2026-06-03T08:52:48.417591+00:00"
+}
